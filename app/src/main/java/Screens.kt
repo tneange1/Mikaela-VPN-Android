@@ -59,7 +59,7 @@ fun Home(vm: AppVm) {
                                 if (i != null) vpnLauncher.launch(i) else vm.start(ctx)
                             }
                         }, contentAlignment = Alignment.Center) {
-                        Text("⏻", fontSize = 24.sp, color = if (on) Ok else MaterialTheme.colorScheme.onSurfaceVariant)
+                        PowerIcon(if (on) Ok else MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -94,9 +94,6 @@ fun Home(vm: AppVm) {
             if (vm.stale) Muted("Показан сохранённый список серверов")
             Spacer(Modifier.height(12.dp))
             Button({ vm.sheet = "renew" }, Modifier.fillMaxWidth().height(50.dp), shape = shape) { Text("Продлить подписку") }
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton({ vm.sheet = "topup" }, Modifier.fillMaxWidth().height(50.dp), shape = shape,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) { Text("Пополнить баланс") }
             Spacer(Modifier.height(20.dp))
         }
     }
@@ -123,7 +120,7 @@ fun Servers(vm: AppVm) {
                     .padding(horizontal = 12.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(s.flag, fontSize = 24.sp); Spacer(Modifier.width(14.dp))
                     Column(Modifier.weight(1f)) { Text(s.label); Muted(s.kind) }
-                    val txt = when { p == null -> ""; p == -2 -> "UDP"; p < 0 -> "—"; else -> "$p мс" }
+                    val txt = when { p == null -> ""; p == -2 -> ""; p < 0 -> "—"; else -> "$p мс" }
                     val col = when { p == null || p < 0 -> MaterialTheme.colorScheme.onSurfaceVariant; p < 120 -> Ok; p < 250 -> Warn; else -> Bad }
                     Text(txt, color = col, fontSize = 13.sp)
                 }
@@ -259,14 +256,8 @@ fun RoutingPage(vm: AppVm) {
     Column(Modifier.fillMaxSize()) {
         SubHead("Маршрутизация") { vm.settingsPage = "main" }
         Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            for ((k, t) in listOf("bypass" to "Все, кроме выбранных", "only" to "Только выбранные")) {
-                val sel = r.mode == k
-                OutlinedButton({ vm.changeRouting(r.copy(mode = k)) }, Modifier.weight(1f), shape = RoundedCornerShape(10.dp),
-                    border = BorderStroke(1.dp, if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline),
-                    colors = if (sel) ButtonDefaults.outlinedButtonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant) else ButtonDefaults.outlinedButtonColors()) {
-                    Text(t, fontSize = 12.sp)
-                }
-            }
+            for ((k, tt) in listOf("bypass" to "Все, кроме выбранных", "only" to "Только выбранные"))
+                Chip(tt, r.mode == k, Modifier.weight(1f)) { vm.changeRouting(r.copy(mode = k)) }
         }
         Muted(if (r.mode == "only") "Через VPN пойдёт только выбранное, остальное — напрямую." else "Выбранное пойдёт напрямую, остальное — через VPN.")
         Spacer(Modifier.height(10.dp))
@@ -285,9 +276,8 @@ fun AppsPage(vm: AppVm) {
     LaunchedEffect(Unit) {
         all = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             val pm = ctx.packageManager
-            val i = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-            pm.queryIntentActivities(i, 0).map { AppInfo(it.loadLabel(pm).toString(), it.activityInfo.packageName) }
-                .filter { it.pkg != ctx.packageName }.distinctBy { it.pkg }.sortedBy { it.label.lowercase() }
+            pm.getInstalledApplications(0).filter { pm.getLaunchIntentForPackage(it.packageName) != null && it.packageName != ctx.packageName }
+                .map { AppInfo(it.loadLabel(pm).toString(), it.packageName) }.sortedBy { it.label.lowercase() }
         }
     }
     val r = vm.routing
@@ -296,7 +286,7 @@ fun AppsPage(vm: AppVm) {
         OutlinedTextField(q, { q = it }, Modifier.fillMaxWidth(), singleLine = true, placeholder = { Text("Поиск") }, shape = RoundedCornerShape(12.dp))
         Spacer(Modifier.height(8.dp))
         val list = all
-        if (list == null) CircularProgressIndicator(Modifier.padding(20.dp)) else {
+        if (list == null) CircularProgressIndicator(Modifier.padding(20.dp)) else if (list.isEmpty()) Text("Не удалось получить список приложений. Разрешите приложению доступ к списку приложений в настройках телефона.", color = Bad, fontSize = 13.sp) else {
             val f = list.filter { q.isBlank() || it.label.contains(q, true) || it.pkg.contains(q, true) }
                 .sortedByDescending { it.pkg in r.apps }
             LazyColumn {

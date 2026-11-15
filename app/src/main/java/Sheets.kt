@@ -39,15 +39,6 @@ fun Sheets(vm: AppVm) {
 }
 
 @Composable
-fun Chip(text: String, sel: Boolean, onClick: () -> Unit) {
-    OutlinedButton(onClick, shape = RoundedCornerShape(10.dp),
-        border = BorderStroke(1.dp, if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline),
-        colors = if (sel) ButtonDefaults.outlinedButtonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant) else ButtonDefaults.outlinedButtonColors()) {
-        Text(text, fontSize = 13.sp)
-    }
-}
-
-@Composable
 fun TariffSheet(vm: AppVm) {
     Text("Подписка", fontSize = 24.sp, fontWeight = FontWeight.Light)
     Spacer(Modifier.height(10.dp))
@@ -95,7 +86,7 @@ fun TopupSheet(vm: AppVm) {
         OutlinedTextField(amount, { amount = it.filter { c -> c.isDigit() } }, Modifier.fillMaxWidth(), singleLine = true,
             label = { Text("Сумма, ₽") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), shape = RoundedCornerShape(12.dp))
         Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("150", "300", "500", "1000").forEach { a -> Chip("$a ₽", amount == a) { amount = a } } }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("150", "300", "500", "1000").forEach { a -> Chip("$a ₽", amount == a, Modifier.weight(1f)) { amount = a } } }
         val rubles = amount.toLongOrNull() ?: 0
         val min = (cur?.minKopeks ?: 0) / 100
         if (rubles in 1 until min) Text("Минимум $min ₽", color = Warn, fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp))
@@ -113,7 +104,7 @@ fun TopupSheet(vm: AppVm) {
                 busy = false
             }
         }, Modifier.fillMaxWidth().height(50.dp), enabled = !busy && cur != null && rubles >= maxOf(min, 1L), shape = RoundedCornerShape(12.dp)) {
-            if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Text("Перейти к оплате")
+            if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = LocalContentColor.current) else Text("Перейти к оплате")
         }
     }
 }
@@ -169,7 +160,7 @@ fun RenewSheet(vm: AppVm) {
                 busy = false
             }
         }, Modifier.fillMaxWidth().height(50.dp), enabled = !busy && p != null, shape = RoundedCornerShape(12.dp)) {
-            if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = LocalContentColor.current)
             else Text(if (short) "Пополнить баланс" else "Продлить" + (p?.price?.let { " за " + rub(it) } ?: ""))
         }
     }
@@ -219,6 +210,6 @@ fun BuyDevSheet(vm: AppVm) {
             busy = false
         }
     }, Modifier.fillMaxWidth().height(50.dp), enabled = !busy && p != null && !p.blocked, shape = RoundedCornerShape(12.dp)) {
-        if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Text(if (short) "Пополнить баланс" else "Купить")
+        if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = LocalContentColor.current) else Text(if (short) "Пополнить баланс" else "Купить")
     }
 }

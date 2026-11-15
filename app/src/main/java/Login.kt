@@ -122,7 +122,7 @@ fun LoginScreen(vm: AppVm) {
             Button({
                 when (mode) { "login" -> vm.login(email, pw); "reg" -> vm.register(email, pw, name); else -> vm.forgot(email) }
             }, Modifier.fillMaxWidth().height(50.dp), enabled = !vm.busy && email.isNotBlank() && (mode == "forgot" || pw.isNotEmpty()), shape = shape) {
-                if (vm.busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                if (vm.busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = LocalContentColor.current)
                 else Text(if (mode == "login") "Войти" else if (mode == "reg") "Зарегистрироваться" else "Отправить письмо")
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
