@@ -33,7 +33,7 @@ class AppVm(app: Application) : AndroidViewModel(app) {
 
     init {
         if (screen == "main") refresh()
-        viewModelScope.launch { while (true) { checkUpdate(); delay(15 * 60 * 1000L) } }
+        viewModelScope.launch { while (true) { checkUpdate(); delay(3 * 60 * 1000L) } }
     }
 
     private suspend fun checkUpdate() {
