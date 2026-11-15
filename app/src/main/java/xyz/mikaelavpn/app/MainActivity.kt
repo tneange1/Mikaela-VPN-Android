@@ -277,7 +277,7 @@ fun SettingsTab(vm: AppVm) {
             Box {
                 OutlinedButton({ menu = true }, shape = RoundedCornerShape(10.dp)) { Text(names[vm.theme] ?: "") }
                 DropdownMenu(menu, { menu = false }) {
-                    names.forEach { (k, v) -> DropdownMenuItem(text = { Text(v) }, onClick = { vm.setTheme(k); menu = false }) }
+                    names.forEach { (k, v) -> DropdownMenuItem(text = { Text(v) }, onClick = { vm.changeTheme(k); menu = false }) }
                 }
             }
         }
