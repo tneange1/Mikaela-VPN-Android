@@ -1,43 +1,11 @@
-<div align="center">
+ <div align="center">
 
 # Mikaela VPN для Android
 
-Приложение на Kotlin и Jetpack Compose, ядро Xray-core
+Современный VPN-клиент на базе Xray-core
 
-[**Скачать APK**](https://github.com/tneange1/Mikaela-VPN-Android/releases/latest/download/Mikaela-VPN.apk)
+[**⬇ Скачать APK**](https://github.com/tneange1/Mikaela-VPN-Android/releases/latest/download/Mikaela-VPN.apk)
+
+[Личный кабинет](https://cabinet.mikaelavpn.xyz/) · [Telegram-бот](https://t.me/vpnmikaelabot)
 
 </div>
-
-## Возможности
-
-- Вход: почта и пароль, регистрация, восстановление пароля, Telegram и OAuth-провайдеры (показываются, если включены в кабинете)
-- Подписка из Remnawave, несколько тарифов с переключением, офлайн-кэш списка серверов
-- Серверы: протокол под названием, реальный пинг справа, автообновление по таймеру
-- Продление подписки и пополнение баланса прямо в приложении
-- Устройства: список, удаление, сброс, докупка
-- Маршрутизация: режимы «все, кроме выбранных» / «только выбранные», по приложениям и по доменам
-- Автоподключение, запуск после перезагрузки, темы, принудительное обновление
-
-Блокировка интернета без VPN (Kill Switch) на Android делается системой: в настройках VPN включите «Постоянный VPN» и «Блокировать подключения без VPN». Кнопка в приложении открывает эти настройки. Discord RPC на телефоне не нужен и не реализован.
-
-## Как устроено
-
-- Конфиг Xray берётся из подписки Remnawave без изменений; заменяются только входящие подключения: вместо них используется TUN от `VpnService`.
-- Дескриптор TUN передаётся ядру через переменную `XRAY_TUN_FD` (поддержка Android в Xray-core).
-- Ядро собирается в GitHub Actions через gomobile из `core/` в `app/libs/xraycore.aar`.
-- Само приложение исключено из VPN (`addDisallowedApplication`): Xray работает в его процессе, и его трафик не попадает обратно в туннель. Поэтому пинг показывает настоящую задержку до сервера.
-- Вход и запросы идут на `https://cabinet.mikaelavpn.xyz`, подписка запрашивается с User-Agent `MikaelaVPN/…`.
-
-## Сборка и выпуск
-
-1. Один раз добавьте секреты репозитория (Settings → Secrets and variables → Actions):
-   `KEYSTORE_B64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`. Без ключа APK подписывается временным ключом, и обновить поверх установленного приложение не получится.
-2. Каждый push в `main` собирает APK в Artifacts.
-3. Чтобы выпустить версию: Releases → *Draft a new release* → тег `v1.0.1` → *Publish*. К релизу прикрепится `Mikaela-VPN.apk`.
-4. Постоянная ссылка на последнюю версию: `https://github.com/tneange1/Mikaela-VPN-Android/releases/latest/download/Mikaela-VPN.apk`
-
-Установленное приложение проверяет релизы раз в 3 минуты. Когда выходит новая версия, интерфейс размывается и появляется окно с кнопкой «Обновить» (скачивание APK; установку подтверждает сам Android).
-
-## Локально
-
-Нужны Android Studio, JDK 17 и Go. Соберите ядро (`core/`), положите `xraycore.aar` в `app/libs/`, а `geoip.dat` и `geosite.dat` в `app/src/main/assets/`, затем откройте проект в Android Studio.
