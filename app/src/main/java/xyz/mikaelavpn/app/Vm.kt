@@ -92,7 +92,7 @@ class AppVm(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun setTheme(t: String) { theme = t; Api.store.theme = t }
+    fun changeTheme(t: String) { theme = t; Api.store.theme = t }
 
     // ---------- VPN ----------
     fun writeConfig(ctx: Context): Boolean {
