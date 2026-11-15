@@ -12,18 +12,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with: { distribution: temurin, java-version: 17 }
 
       - uses: actions/setup-go@v5
-        with: { go-version: stable }
+        with: { go-version: stable, cache: false }
 
       - uses: android-actions/setup-android@v3
+
+      - name: Install NDK
+        run: |
+          sdkmanager --install "ndk;27.2.12479018" "platforms;android-34" "build-tools;34.0.0" > /dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
 
       - name: Build Xray core (gomobile -> AAR)
         working-directory: core
         run: |
-          export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          set -ex
+          go version
           go get github.com/xtls/xray-core@latest golang.org/x/mobile@latest
           go mod tidy
           go install golang.org/x/mobile/cmd/gomobile@latest
@@ -31,7 +37,8 @@ jobs:
           export PATH="$PATH:$(go env GOPATH)/bin"
           gomobile init
           mkdir -p ../app/libs
-          gomobile bind -target=android/arm64,android/arm -androidapi 26 -ldflags="-s -w" -o ../app/libs/xraycore.aar .
+          gomobile bind -v -target=android/arm64,android/arm -androidapi 26 -ldflags="-s -w" -o ../app/libs/xraycore.aar .
+          ls -la ../app/libs
 
       - name: Geo data
         run: |
