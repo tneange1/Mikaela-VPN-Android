@@ -1,0 +1,344 @@
+package xyz.mikaelavpn.app
+
+import android.content.Intent
+import android.net.Uri
+import android.net.VpnService
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+
+@Composable
+fun Home(vm: AppVm) {
+    val ctx = LocalContext.current
+    val on by VpnSvc.state.collectAsStateWithLifecycle()
+    val vpnLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        if (r.resultCode == android.app.Activity.RESULT_OK) vm.start(ctx)
+    }
+    val s = vm.sub
+    val shape = RoundedCornerShape(12.dp)
+    LazyColumn(Modifier.fillMaxSize()) {
+        item {
+            Title("Главная")
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                Box(Modifier.size(8.dp).clip(CircleShape).background(if (on) Ok else MaterialTheme.colorScheme.onSurfaceVariant))
+                Spacer(Modifier.width(8.dp))
+                Text(if (on) "Подключено" + (vm.current?.let { " к ${it.label}" } ?: "") else if (vm.connecting) "Подключаю…" else "Отключено",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Spacer(Modifier.height(22.dp))
+            Panel {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Column {
+                        Text(if (on) "Защита активна" else "Соединение остановлено", fontWeight = FontWeight.Medium)
+                        Muted("Нажмите для " + if (on) "отключения" else "подключения")
+                    }
+                    Box(Modifier.size(58.dp).clip(CircleShape).border(1.dp, if (on) Ok else MaterialTheme.colorScheme.outline, CircleShape)
+                        .clickable {
+                            if (on) vm.stop(ctx) else {
+                                val i = VpnService.prepare(ctx)
+                                if (i != null) vpnLauncher.launch(i) else vm.start(ctx)
+                            }
+                        }, contentAlignment = Alignment.Center) {
+                        Text("⏻", fontSize = 24.sp, color = if (on) Ok else MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            if (on && vm.routingDirty) {
+                Spacer(Modifier.height(10.dp))
+                Panel {
+                    Text("Правила маршрутизации изменены", fontSize = 13.sp)
+                    TextButton({ vm.reconnect(ctx) }) { Text("Переподключить") }
+                }
+            }
+            if (vm.error.isNotEmpty()) Text(vm.error, color = Bad, modifier = Modifier.padding(top = 10.dp), fontSize = 13.sp)
+            Spacer(Modifier.height(18.dp))
+            Muted("Текущая локация", 13)
+            Spacer(Modifier.height(8.dp))
+            Panel(onClick = { vm.tab = 1 }) {
+                val c = vm.current
+                if (c == null) Text("—") else Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(c.flag, fontSize = 22.sp); Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) { Text(c.label); Muted(c.kind) }
+                    vm.pings[c.tag]?.let { p ->
+                        if (p >= 0) Text("$p мс", fontSize = 13.sp, color = if (p < 120) Ok else if (p < 250) Warn else Bad)
+                    }
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            if (s != null) {
+                KV("Тариф", s.tariff + if (vm.tariffs.size > 1) "  ›" else "", if (vm.tariffs.size > 1) ({ vm.sheet = "tariff" }) else null)
+                KV("Осталось", if (s.expired) "истекла" else s.daysLeft?.let { "$it дн." } ?: "—")
+                KV("Трафик", if (s.limitGb > 0) "%.1f / %.0f ГБ".format(s.usedGb, s.limitGb) else "%.1f ГБ / безлимит".format(s.usedGb))
+                KV("Устройств (лимит)", s.deviceLimit.toString())
+            } else if (vm.busy) CircularProgressIndicator(Modifier.padding(20.dp))
+            if (vm.stale) Muted("Показан сохранённый список серверов")
+            Spacer(Modifier.height(12.dp))
+            Button({ vm.sheet = "renew" }, Modifier.fillMaxWidth().height(50.dp), shape = shape) { Text("Продлить подписку") }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton({ vm.sheet = "topup" }, Modifier.fillMaxWidth().height(50.dp), shape = shape,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) { Text("Пополнить баланс") }
+            Spacer(Modifier.height(20.dp))
+        }
+    }
+}
+
+@Composable
+fun Servers(vm: AppVm) {
+    val ctx = LocalContext.current
+    val on by VpnSvc.state.collectAsStateWithLifecycle()
+    Column(Modifier.fillMaxSize()) {
+        Title("Серверы", "Выберите сервер для подключения")
+        Row(Modifier.padding(vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton({ vm.pingAll() }, shape = RoundedCornerShape(12.dp)) { Text("Тест пинга") }
+            OutlinedButton({ vm.refresh() }, shape = RoundedCornerShape(12.dp), enabled = !vm.busy) { Text("Обновить") }
+        }
+        if (vm.error.isNotEmpty()) Text(vm.error, color = Bad, fontSize = 13.sp)
+        LazyColumn {
+            items(vm.servers, key = { it.tag }) { s ->
+                val p = vm.pings[s.tag]
+                val sel = s.tag == vm.current?.tag
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                    .background(if (sel) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent)
+                    .clickable { if (!sel) { vm.pick(s.tag); if (on) vm.reconnect(ctx) } }
+                    .padding(horizontal = 12.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(s.flag, fontSize = 24.sp); Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) { Text(s.label); Muted(s.kind) }
+                    val txt = when { p == null -> ""; p == -2 -> "UDP"; p < 0 -> "—"; else -> "$p мс" }
+                    val col = when { p == null || p < 0 -> MaterialTheme.colorScheme.onSurfaceVariant; p < 120 -> Ok; p < 250 -> Warn; else -> Bad }
+                    Text(txt, color = col, fontSize = 13.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun Devices(vm: AppVm) {
+    LaunchedEffect(Unit) { vm.loadDevices() }
+    val d = vm.devices
+    var confirm by remember { mutableStateOf(false) }
+    if (confirm) AlertDialog(
+        onDismissRequest = { confirm = false },
+        title = { Text("Сбросить все устройства?") },
+        text = { Text("Все привязанные устройства будут удалены из подписки.") },
+        confirmButton = { TextButton({ confirm = false; vm.resetDevices() }) { Text("Сбросить", color = Bad) } },
+        dismissButton = { TextButton({ confirm = false }) { Text("Отмена") } },
+    )
+    Column(Modifier.fillMaxSize()) {
+        Title("Устройства", if (d != null) "Подключено ${d.count} из ${d.limit ?: "∞"}" else "Загрузка…")
+        Row(Modifier.padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton({ vm.sheet = "buydev" }, shape = RoundedCornerShape(12.dp)) { Text("Докупить") }
+            if (d != null && d.list.isNotEmpty()) OutlinedButton({ confirm = true }, shape = RoundedCornerShape(12.dp)) { Text("Сбросить все") }
+        }
+        if (vm.devErr.isNotEmpty()) Text(vm.devErr, color = Bad, fontSize = 13.sp)
+        LazyColumn {
+            items(d?.list ?: emptyList(), key = { it.hwid }) { x ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(x.title)
+                            if (x.self) Text("  это устройство", fontSize = 11.sp, color = Ok)
+                        }
+                        Muted(x.platform + (if (x.platform.isNotEmpty()) " · " else "") + x.hwid.take(10) + "…")
+                    }
+                    TextButton({ vm.deleteDevice(x.hwid) }) { Text("Удалить", color = Bad) }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+            }
+        }
+    }
+}
+
+// ---------------- настройки ----------------
+
+@Composable
+fun NavRow(title: String, value: String = "", onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        Text(title)
+        Row(verticalAlignment = Alignment.CenterVertically) { if (value.isNotEmpty()) Muted(value, 13); Spacer(Modifier.width(8.dp)); Muted("›", 18) }
+    }
+    HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+}
+
+@Composable
+fun SwitchRow(title: String, sub: String, v: Boolean, onChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f).padding(end = 12.dp)) { Text(title); Muted(sub) }
+        Switch(v, onChange)
+    }
+    HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+}
+
+@Composable
+fun SettingsTab(vm: AppVm) {
+    when (vm.settingsPage) {
+        "adv" -> AdvPage(vm)
+        "routing" -> RoutingPage(vm)
+        "apps" -> AppsPage(vm)
+        "domains" -> DomainsPage(vm)
+        else -> SettingsMain(vm)
+    }
+}
+
+@Composable
+fun SubHead(title: String, back: () -> Unit) {
+    Spacer(Modifier.height(12.dp))
+    TextButton(back, contentPadding = PaddingValues(0.dp)) { Text("‹ Назад") }
+    Text(title, fontSize = 28.sp, fontWeight = FontWeight.Light)
+    Spacer(Modifier.height(8.dp))
+}
+
+@Composable
+fun SettingsMain(vm: AppVm) {
+    val ctx = LocalContext.current
+    val themes = listOf("system" to "Как в системе", "light" to "Белая", "gray" to "Серая", "dark" to "Чёрная")
+    val ivs = listOf("60000" to "1 мин", "300000" to "5 мин", "900000" to "15 мин", "1800000" to "30 мин", "3600000" to "1 час")
+    Column(Modifier.fillMaxSize()) {
+        Title("Настройки")
+        Spacer(Modifier.height(12.dp))
+        NavRow("Дополнительные параметры") { vm.settingsPage = "adv" }
+        NavRow("Маршрутизация", if (vm.routing.apps.isNotEmpty() || vm.routing.domains.isNotEmpty()) "${vm.routing.apps.size + vm.routing.domains.size}" else "") { vm.settingsPage = "routing" }
+        Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("Тема"); Pick(vm.theme, themes) { vm.changeTheme(it) }
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+        Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("Автообновление серверов"); Pick(vm.interval.toString(), ivs) { vm.changeInterval(it.toLong()) }
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+        KV("Версия", "v" + BuildConfig.VERSION_NAME)
+        Spacer(Modifier.height(10.dp))
+        Muted(Api.store.email ?: "", 13)
+        Spacer(Modifier.height(6.dp))
+        OutlinedButton({ vm.logout(ctx) }, Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(12.dp)) { Text("Выйти из аккаунта") }
+    }
+}
+
+@Composable
+fun AdvPage(vm: AppVm) {
+    val ctx = LocalContext.current
+    Column(Modifier.fillMaxSize()) {
+        SubHead("Дополнительные параметры") { vm.settingsPage = "main" }
+        SwitchRow("Автоподключение", "Подключаться при открытии приложения", vm.autoConnect) { vm.changeAuto(it) }
+        SwitchRow("Запуск при включении телефона", "Подключаться после перезагрузки (если выдано разрешение VPN)", vm.boot) { vm.changeBoot(it) }
+        Spacer(Modifier.height(14.dp))
+        Panel {
+            Text("Блокировка интернета без VPN")
+            Spacer(Modifier.height(4.dp))
+            Muted("В системных настройках VPN включите «Постоянный VPN» и «Блокировать подключения без VPN» для Mikaela VPN.")
+            TextButton({ ctx.startActivity(Intent(Settings.ACTION_VPN_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }, contentPadding = PaddingValues(0.dp)) {
+                Text("Открыть настройки VPN")
+            }
+        }
+    }
+}
+
+@Composable
+fun RoutingPage(vm: AppVm) {
+    val r = vm.routing
+    Column(Modifier.fillMaxSize()) {
+        SubHead("Маршрутизация") { vm.settingsPage = "main" }
+        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            for ((k, t) in listOf("bypass" to "Все, кроме выбранных", "only" to "Только выбранные")) {
+                val sel = r.mode == k
+                OutlinedButton({ vm.changeRouting(r.copy(mode = k)) }, Modifier.weight(1f), shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline),
+                    colors = if (sel) ButtonDefaults.outlinedButtonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant) else ButtonDefaults.outlinedButtonColors()) {
+                    Text(t, fontSize = 12.sp)
+                }
+            }
+        }
+        Muted(if (r.mode == "only") "Через VPN пойдёт только выбранное, остальное — напрямую." else "Выбранное пойдёт напрямую, остальное — через VPN.")
+        Spacer(Modifier.height(10.dp))
+        NavRow("Маршрутизация приложений", if (r.apps.isEmpty()) "" else r.apps.size.toString()) { vm.settingsPage = "apps" }
+        NavRow("Маршрутизация доменов", if (r.domains.isEmpty()) "" else r.domains.size.toString()) { vm.settingsPage = "domains" }
+    }
+}
+
+data class AppInfo(val label: String, val pkg: String)
+
+@Composable
+fun AppsPage(vm: AppVm) {
+    val ctx = LocalContext.current
+    var all by remember { mutableStateOf<List<AppInfo>?>(null) }
+    var q by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) {
+        all = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val pm = ctx.packageManager
+            val i = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+            pm.queryIntentActivities(i, 0).map { AppInfo(it.loadLabel(pm).toString(), it.activityInfo.packageName) }
+                .filter { it.pkg != ctx.packageName }.distinctBy { it.pkg }.sortedBy { it.label.lowercase() }
+        }
+    }
+    val r = vm.routing
+    Column(Modifier.fillMaxSize()) {
+        SubHead("Приложения") { vm.settingsPage = "routing" }
+        OutlinedTextField(q, { q = it }, Modifier.fillMaxWidth(), singleLine = true, placeholder = { Text("Поиск") }, shape = RoundedCornerShape(12.dp))
+        Spacer(Modifier.height(8.dp))
+        val list = all
+        if (list == null) CircularProgressIndicator(Modifier.padding(20.dp)) else {
+            val f = list.filter { q.isBlank() || it.label.contains(q, true) || it.pkg.contains(q, true) }
+                .sortedByDescending { it.pkg in r.apps }
+            LazyColumn {
+                items(f, key = { it.pkg }) { a ->
+                    val on = a.pkg in r.apps
+                    Row(Modifier.fillMaxWidth().clickable {
+                        vm.changeRouting(r.copy(apps = if (on) r.apps - a.pkg else r.apps + a.pkg))
+                    }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) { Text(a.label); Muted(a.pkg) }
+                        Checkbox(on, { vm.changeRouting(r.copy(apps = if (on) r.apps - a.pkg else r.apps + a.pkg)) })
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun DomainsPage(vm: AppVm) {
+    var t by remember { mutableStateOf("") }
+    val r = vm.routing
+    fun add() {
+        val d = Api.normDomain(t)
+        if (d.isNotEmpty() && d !in r.domains) vm.changeRouting(r.copy(domains = r.domains + d))
+        t = ""
+    }
+    Column(Modifier.fillMaxSize()) {
+        SubHead("Домены") { vm.settingsPage = "routing" }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(t, { t = it }, Modifier.weight(1f), singleLine = true, placeholder = { Text("example.com") }, shape = RoundedCornerShape(12.dp))
+            Spacer(Modifier.width(8.dp))
+            Button({ add() }, enabled = t.isNotBlank(), shape = RoundedCornerShape(12.dp)) { Text("Добавить") }
+        }
+        Muted("Поддомены учитываются автоматически.")
+        LazyColumn {
+            items(r.domains, key = { it }) { d ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text(d)
+                    TextButton({ vm.changeRouting(r.copy(domains = r.domains - d)) }) { Text("Убрать", color = Bad) }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+            }
+        }
+    }
+}
