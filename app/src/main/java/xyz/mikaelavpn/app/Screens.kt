@@ -9,7 +9,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -19,6 +21,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -100,29 +103,52 @@ fun Home(vm: AppVm) {
 }
 
 @Composable
+fun ActionRow(icon: Int, text: String, enabled: Boolean = true, onClick: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    Row(Modifier.fillMaxWidth().alpha(if (enabled) 1f else 0.5f).clip(RoundedCornerShape(14.dp)).background(cs.surfaceVariant)
+        .border(1.dp, cs.outline, RoundedCornerShape(14.dp)).clickable(enabled = enabled) { onClick() }.padding(horizontal = 18.dp, vertical = 15.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Ico(icon, cs.onSurface, 20.dp); Spacer(Modifier.width(14.dp)); Text(text, fontSize = 15.sp)
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
 fun Servers(vm: AppVm) {
     val ctx = LocalContext.current
     val on by VpnSvc.state.collectAsStateWithLifecycle()
+    var menu by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize()) {
-        Title("Серверы", "Выберите сервер для подключения")
-        Row(Modifier.padding(vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton({ vm.pingAll() }, shape = RoundedCornerShape(12.dp)) { Text("Тест пинга") }
-            OutlinedButton({ vm.refresh() }, shape = RoundedCornerShape(12.dp), enabled = !vm.busy) { Text("Обновить") }
-        }
-        if (vm.error.isNotEmpty()) Text(vm.error, color = Bad, fontSize = 13.sp)
-        LazyColumn {
+        Title("Серверы", "Нажмите — выбрать, удерживайте — проверить пинг")
+        Spacer(Modifier.height(14.dp))
+        ActionRow(4, "Тест пинга") { vm.pingAll() }
+        Spacer(Modifier.height(10.dp))
+        ActionRow(5, "Обновить", !vm.busy) { vm.refresh() }
+        if (vm.error.isNotEmpty()) Text(vm.error, color = Bad, fontSize = 13.sp, modifier = Modifier.padding(top = 10.dp))
+        Spacer(Modifier.height(10.dp))
+        LazyColumn(contentPadding = PaddingValues(bottom = 16.dp)) {
             items(vm.servers, key = { it.tag }) { s ->
                 val p = vm.pings[s.tag]
                 val sel = s.tag == vm.current?.tag
-                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                    .background(if (sel) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent)
-                    .clickable { if (!sel) { vm.pick(s.tag); if (on) vm.reconnect(ctx) } }
-                    .padding(horizontal = 12.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(s.flag, fontSize = 24.sp); Spacer(Modifier.width(14.dp))
-                    Column(Modifier.weight(1f)) { Text(s.label); Muted(s.kind) }
-                    val txt = when { p == null -> ""; p == -2 -> ""; p < 0 -> "—"; else -> "$p мс" }
-                    val col = when { p == null || p < 0 -> MaterialTheme.colorScheme.onSurfaceVariant; p < 120 -> Ok; p < 250 -> Warn; else -> Bad }
-                    Text(txt, color = col, fontSize = 13.sp)
+                Box {
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                        .background(if (sel) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent)
+                        .combinedClickable(onClick = { if (!sel) { vm.pick(s.tag); if (on) vm.reconnect(ctx) } }, onLongClick = { menu = s.tag })
+                        .padding(horizontal = 12.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.width(34.dp), contentAlignment = Alignment.CenterStart) { Text(s.flag, fontSize = 24.sp) }
+                        Column(Modifier.weight(1f).padding(horizontal = 6.dp)) {
+                            Text(s.label, fontSize = 16.sp, maxLines = 1)
+                            Text(s.kind, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                        }
+                        val txt = when { p == null -> ""; p == -2 -> ""; p < 0 -> "—"; else -> "$p мс" }
+                        val col = when { p == null || p < 0 -> MaterialTheme.colorScheme.onSurfaceVariant; p < 120 -> Ok; p < 250 -> Warn; else -> Bad }
+                        Text(txt, color = col, fontSize = 13.sp)
+                        if (sel) { Spacer(Modifier.width(10.dp)); Box(Modifier.size(7.dp).clip(CircleShape).background(Ok)) }
+                    }
+                    DropdownMenu(menu == s.tag, { menu = null }) {
+                        DropdownMenuItem(text = { Text("Проверить пинг") }, onClick = { menu = null; vm.pingOne(s.tag) })
+                        DropdownMenuItem(text = { Text("Выбрать сервер") }, onClick = { menu = null; vm.pick(s.tag); if (on) vm.reconnect(ctx) })
+                    }
                 }
             }
         }
@@ -133,6 +159,7 @@ fun Servers(vm: AppVm) {
 fun Devices(vm: AppVm) {
     LaunchedEffect(Unit) { vm.loadDevices() }
     val d = vm.devices
+    val cs = MaterialTheme.colorScheme
     var confirm by remember { mutableStateOf(false) }
     if (confirm) AlertDialog(
         onDismissRequest = { confirm = false },
@@ -143,24 +170,28 @@ fun Devices(vm: AppVm) {
     )
     Column(Modifier.fillMaxSize()) {
         Title("Устройства", if (d != null) "Подключено ${d.count} из ${d.limit ?: "∞"}" else "Загрузка…")
-        Row(Modifier.padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton({ vm.sheet = "buydev" }, shape = RoundedCornerShape(12.dp)) { Text("Докупить") }
-            if (d != null && d.list.isNotEmpty()) OutlinedButton({ confirm = true }, shape = RoundedCornerShape(12.dp)) { Text("Сбросить все") }
-        }
-        if (vm.devErr.isNotEmpty()) Text(vm.devErr, color = Bad, fontSize = 13.sp)
-        LazyColumn {
+        Spacer(Modifier.height(14.dp))
+        ActionRow(2, "Докупить устройства") { vm.sheet = "buydev" }
+        if (d != null && d.list.isNotEmpty()) { Spacer(Modifier.height(10.dp)); ActionRow(5, "Сбросить все") { confirm = true } }
+        if (vm.devErr.isNotEmpty()) Text(vm.devErr, color = Bad, fontSize = 13.sp, modifier = Modifier.padding(top = 10.dp))
+        Spacer(Modifier.height(12.dp))
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 16.dp)) {
             items(d?.list ?: emptyList(), key = { it.hwid }) { x ->
-                Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                val phone = x.platform.contains("android", true) || x.platform.contains("ios", true) || x.platform.contains("iphone", true)
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(cs.surfaceVariant)
+                    .border(1.dp, cs.outline, RoundedCornerShape(14.dp)).padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Ico(if (phone) 6 else 2, cs.onSurfaceVariant, 22.dp)
+                    Spacer(Modifier.width(14.dp))
                     Column(Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(x.title)
-                            if (x.self) Text("  это устройство", fontSize = 11.sp, color = Ok)
-                        }
-                        Muted(x.platform + (if (x.platform.isNotEmpty()) " · " else "") + x.hwid.take(10) + "…")
+                        Text(x.title.ifEmpty { x.platform.ifEmpty { "Устройство" } }, fontSize = 15.sp, maxLines = 1)
+                        Text(
+                            (if (x.platform.isNotEmpty()) x.platform + " · " else "") + x.hwid.take(8) + "…" + (if (x.self) "  ·  это устройство" else ""),
+                            fontSize = 12.sp, color = if (x.self) Ok else cs.onSurfaceVariant, maxLines = 1,
+                        )
                     }
-                    TextButton({ vm.deleteDevice(x.hwid) }) { Text("Удалить", color = Bad) }
+                    TextButton({ vm.deleteDevice(x.hwid) }) { Text("Удалить", color = Bad, fontSize = 13.sp) }
                 }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
             }
         }
     }
@@ -224,6 +255,7 @@ fun SettingsMain(vm: AppVm) {
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
         KV("Версия", "v" + BuildConfig.VERSION_NAME)
+        TextButton({ vm.openGuide() }, contentPadding = PaddingValues(0.dp)) { Text("Показать инструкцию") }
         Spacer(Modifier.height(10.dp))
         Muted(Api.store.email ?: "", 13)
         Spacer(Modifier.height(6.dp))

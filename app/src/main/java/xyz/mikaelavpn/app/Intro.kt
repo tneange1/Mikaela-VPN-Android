@@ -1,0 +1,113 @@
+package xyz.mikaelavpn.app
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+
+data class Notes(val add: List<String> = emptyList(), val chg: List<String> = emptyList(), val fix: List<String> = emptyList(), val rm: List<String> = emptyList())
+
+/** Что изменилось в версии. Для каждой новой версии добавляйте запись: окно покажется один раз после обновления. */
+val NOTES = mapOf(
+    "1.1.0" to Notes(
+        add = listOf(
+            "Продление подписки и пополнение баланса прямо в приложении",
+            "Докупка устройств, выбор тарифа, если их несколько",
+            "Маршрутизация по приложениям и доменам",
+            "Автоподключение и запуск после перезагрузки телефона",
+            "Вход через Telegram и другие способы, регистрация и восстановление пароля",
+            "Пинг отдельного сервера: долгое нажатие на сервер",
+            "Окно «Что нового» и инструкция при первом запуске",
+        ),
+        chg = listOf("Новый вид серверов, устройств и нижней панели", "Единый вид кнопок"),
+        fix = listOf("Список приложений в маршрутизации теперь отображается"),
+    ),
+)
+
+class Section(val title: String?, val items: List<String>)
+class Step(val title: String, val sections: List<Section>)
+
+val GUIDE = listOf(
+    Step("Главная", listOf(Section(null, listOf(
+        "Большая кнопка включает и отключает VPN",
+        "Сумма сверху — ваш баланс, нажмите на неё, чтобы пополнить",
+        "«Продлить подписку» продлевает тариф, если тарифов несколько, их можно переключить",
+    )))),
+    Step("Серверы", listOf(Section(null, listOf(
+        "Нажмите на сервер, чтобы выбрать его",
+        "«Тест пинга» проверяет все серверы, а долгое нажатие на сервер — только его",
+        "«Автовыбор» сам берёт лучший доступный сервер",
+    )))),
+    Step("Устройства", listOf(Section(null, listOf(
+        "Здесь видно, какие устройства привязаны к подписке",
+        "Лишнее можно удалить, а если лимит мал — докупить устройства",
+    )))),
+    Step("Настройки", listOf(Section(null, listOf(
+        "Дополнительные параметры: автоподключение, запуск после перезагрузки, блокировка интернета без VPN (системная настройка Android)",
+        "Маршрутизация: какие приложения и сайты идут мимо VPN, либо только они через VPN",
+        "Тема и частота автообновления списка серверов",
+    )))),
+    Step("Обновления", listOf(Section(null, listOf(
+        "Приложение само проверяет новые версии",
+        "Когда выйдет обновление, появится окно с кнопкой «Обновить»; после скачивания подтвердите установку",
+    )))),
+)
+
+fun notesSteps(v: String): List<Step> {
+    val n = NOTES[v] ?: return emptyList()
+    val s = ArrayList<Section>()
+    if (n.add.isNotEmpty()) s.add(Section("Добавлено", n.add))
+    if (n.chg.isNotEmpty()) s.add(Section("Изменено", n.chg))
+    if (n.fix.isNotEmpty()) s.add(Section("Исправлено", n.fix))
+    if (n.rm.isNotEmpty()) s.add(Section("Убрано", n.rm))
+    return listOf(Step("Что нового в v$v", s))
+}
+
+@Composable
+fun IntroDialog(vm: AppVm) {
+    if (vm.introKind.isEmpty()) return
+    val steps = if (vm.introKind == "guide") GUIDE else notesSteps(BuildConfig.VERSION_NAME)
+    if (steps.isEmpty()) { vm.closeIntro(); return }
+    val i = vm.introStep.coerceIn(0, steps.size - 1); val st = steps[i]; val last = i == steps.size - 1
+    val shape = RoundedCornerShape(20.dp)
+    Dialog(onDismissRequest = { vm.closeIntro() }) {
+        Column(Modifier.fillMaxWidth().heightIn(max = 560.dp).clip(shape).background(MaterialTheme.colorScheme.background)
+            .border(1.dp, MaterialTheme.colorScheme.outline, shape).padding(24.dp)) {
+            Text(st.title, fontSize = 22.sp, fontWeight = FontWeight.Light)
+            Spacer(Modifier.height(12.dp))
+            Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+                st.sections.forEach { sec ->
+                    if (sec.title != null) { Spacer(Modifier.height(6.dp)); Muted(sec.title.uppercase(), 11); Spacer(Modifier.height(4.dp)) }
+                    sec.items.forEach { Row(Modifier.padding(vertical = 3.dp)) { Muted("•  ", 14); Text(it, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 21.sp) } }
+                }
+            }
+            if (steps.size > 1) {
+                Spacer(Modifier.height(16.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                    steps.indices.forEach { k ->
+                        Box(Modifier.padding(horizontal = 3.dp).size(6.dp).clip(CircleShape)
+                            .background(if (k == i) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline))
+                    }
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (steps.size > 1 && !last) OutlinedButton({ vm.closeIntro() }, Modifier.weight(1f)) { Text("Пропустить") }
+                Button({ if (last) vm.closeIntro() else vm.introStep = i + 1 }, Modifier.weight(1f)) { Text(if (last) "Готово" else "Далее") }
+            }
+        }
+    }
+}

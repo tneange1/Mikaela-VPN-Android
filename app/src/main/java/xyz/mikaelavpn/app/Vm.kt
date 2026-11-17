@@ -39,12 +39,16 @@ class AppVm(app: Application) : AndroidViewModel(app) {
     var interval by mutableStateOf(Api.store.interval)
     var stale by mutableStateOf(Api.cachedServers().isNotEmpty())
 
+    var introKind by mutableStateOf("")
+    var introStep by mutableStateOf(0)
+
     private var refreshing = false
     private var autoDone = false
 
     val current: Srv? get() = servers.firstOrNull { it.tag == selected } ?: servers.firstOrNull()
 
     init {
+        initIntro()
         if (screen == "main") refresh()
         viewModelScope.launch { while (true) { checkUpdate(); delay(3 * 60 * 1000L) } }
         viewModelScope.launch { while (true) { delay(Api.store.interval); if (screen == "main") refresh(true) } }
@@ -56,6 +60,26 @@ class AppVm(app: Application) : AndroidViewModel(app) {
     }
 
     fun say(t: String) { toast = t }
+
+    // ---------- «Что нового» и инструкция ----------
+    private fun initIntro() {
+        val st = Api.store; val v = BuildConfig.VERSION_NAME
+        val seen = st.seen
+        if (seen == null && st.access == null && st.email == null) { introKind = "guide"; introStep = 0; return }
+        if (seen != v) { st.seen = v; if (NOTES[v] != null) { introKind = "notes"; introStep = 0 } }
+    }
+    fun openGuide() { introKind = "guide"; introStep = 0 }
+    fun closeIntro() { if (introKind == "guide") Api.store.seen = BuildConfig.VERSION_NAME; introKind = "" }
+
+    fun pingOne(tag: String) {
+        val s = servers.firstOrNull { it.tag == tag } ?: return
+        viewModelScope.launch {
+            pings = pings - tag
+            val p = Api.ping(s)
+            pings = pings + (tag to p)
+            say(s.label + ": " + when { p == -2 -> "UDP (Hysteria), пинг недоступен"; p < 0 -> "нет ответа"; else -> "$p мс" })
+        }
+    }
 
     fun expired() { Api.logout(); servers = emptyList(); sub = null; balance = null; screen = "login" }
 

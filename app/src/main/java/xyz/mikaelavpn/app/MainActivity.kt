@@ -55,6 +55,7 @@ fun Root(vm: AppVm) {
         Box(Modifier.fillMaxSize().then(if (force) Modifier.blur(18.dp) else Modifier)) {
             if (vm.screen == "login") LoginScreen(vm) else MainScreen(vm)
         }
+        IntroDialog(vm)
         if (force) UpdateDialog(vm.newVersion!!)
     }
 }
@@ -114,14 +115,23 @@ fun Pick(value: String, options: List<Pair<String, String>>, onPick: (String) ->
 @Composable
 fun MainScreen(vm: AppVm) {
     val tabs = listOf("Главная", "Серверы", "Устройства", "Настройки")
-    val icons = listOf("⌂", "◍", "▭", "≡")
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
-            NavigationBar(containerColor = MaterialTheme.colorScheme.background) {
-                tabs.forEachIndexed { i, t ->
-                    NavigationBarItem(selected = vm.tab == i, onClick = { vm.tab = i; if (i == 2) vm.loadDevices(); if (i != 3) vm.settingsPage = "main" },
-                        icon = { Text(icons[i], fontSize = 20.sp) }, label = { Text(t, fontSize = 11.sp) })
+            Column(Modifier.background(MaterialTheme.colorScheme.background).navigationBarsPadding()) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                Row(Modifier.fillMaxWidth().height(68.dp)) {
+                    tabs.forEachIndexed { i, t ->
+                        val sel = vm.tab == i
+                        val c = if (sel) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        Column(Modifier.weight(1f).fillMaxHeight().clickable {
+                            vm.tab = i; if (i == 2) vm.loadDevices(); if (i != 3) vm.settingsPage = "main"
+                        }, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                            Ico(i, c, 24.dp)
+                            Spacer(Modifier.height(5.dp))
+                            Text(t, fontSize = 11.sp, color = c, maxLines = 1, fontWeight = if (sel) FontWeight.Medium else FontWeight.Normal)
+                        }
+                    }
                 }
             }
         },
@@ -130,7 +140,7 @@ fun MainScreen(vm: AppVm) {
             Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Brand()
                 vm.balance?.let {
-                    Text(rub(it), modifier = Modifier.clip(RoundedCornerShape(99.dp))
+                    Text(rub(it) + "  +", modifier = Modifier.clip(RoundedCornerShape(99.dp))
                         .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(99.dp))
                         .clickable { vm.sheet = "topup" }.padding(horizontal = 14.dp, vertical = 7.dp), fontSize = 13.sp)
                 }
