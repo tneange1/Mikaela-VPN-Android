@@ -31,6 +31,7 @@ class Store(ctx: Context) {
     var subUrl: String? get() = s("suburl"); set(v) = put("suburl", v)
     var cache: String? get() = s("cache"); set(v) = put("cache", v)
     var routing: String? get() = s("routing"); set(v) = put("routing", v)
+    var pre: String? get() = s("pre"); set(v) = put("pre", v)
     var autoConnect: Boolean get() = sp.getBoolean("auto", false); set(v) { sp.edit().putBoolean("auto", v).apply() }
     var boot: Boolean get() = sp.getBoolean("boot", false); set(v) { sp.edit().putBoolean("boot", v).apply() }
     var interval: Long get() = sp.getLong("iv", 300000L); set(v) { sp.edit().putLong("iv", v).apply() }

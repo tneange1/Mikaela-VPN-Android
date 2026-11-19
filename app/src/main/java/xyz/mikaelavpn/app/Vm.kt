@@ -34,6 +34,7 @@ class AppVm(app: Application) : AndroidViewModel(app) {
     var settingsPage by mutableStateOf("main")
     var routing by mutableStateOf(Api.routing())
     var routingDirty by mutableStateOf(false)
+    var pre by mutableStateOf(Api.pre())
     var autoConnect by mutableStateOf(Api.store.autoConnect)
     var boot by mutableStateOf(Api.store.boot)
     var interval by mutableStateOf(Api.store.interval)
@@ -191,7 +192,7 @@ class AppVm(app: Application) : AndroidViewModel(app) {
     fun pingAll() {
         viewModelScope.launch {
             pings = emptyMap()
-            servers.map { s -> async { s.tag to Api.ping(s) } }.awaitAll().let { pings = it.toMap() }
+            for (s in servers) pings = pings + (s.tag to Api.ping(s))   // по очереди: результат каждого виден сразу
         }
     }
 
@@ -210,12 +211,13 @@ class AppVm(app: Application) : AndroidViewModel(app) {
     fun changeAuto(v: Boolean) { autoConnect = v; Api.store.autoConnect = v }
     fun changeBoot(v: Boolean) { boot = v; Api.store.boot = v }
     fun changeInterval(v: Long) { interval = v; Api.store.interval = v }
+    fun changePre(l: List<PreRule>) { pre = l; Api.savePre(l); routingDirty = true }
     fun changeRouting(r: Routing) { routing = r; Api.saveRouting(r); routingDirty = true }
 
     // ---------- VPN ----------
     fun writeConfig(ctx: Context): Boolean {
         val s = current ?: return false
-        File(ctx.filesDir, "xray.json").writeText(Api.buildXrayConfig(s, routing))
+        File(ctx.filesDir, "xray.json").writeText(Api.buildXrayConfig(s, routing, pre, servers))
         return true
     }
 

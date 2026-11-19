@@ -11,6 +11,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -117,9 +123,10 @@ fun ActionRow(icon: Int, text: String, enabled: Boolean = true, onClick: () -> U
 fun Servers(vm: AppVm) {
     val ctx = LocalContext.current
     val on by VpnSvc.state.collectAsStateWithLifecycle()
-    var menu by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize()) {
-        Title("Серверы", "Нажмите — выбрать, удерживайте — проверить пинг")
+        Title("Серверы", "Нажмите — выбрать, свайп вправо — проверить пинг")
+        val answered = vm.servers.count { (vm.pings[it.tag] ?: 0) > 0 }; val checked = vm.servers.count { vm.pings[it.tag] != null }
+        Muted("Всего серверов: ${vm.servers.size}" + if (checked > 0) " · отвечают: $answered из $checked" else "", 13)
         Spacer(Modifier.height(14.dp))
         ActionRow(4, "Тест пинга") { vm.pingAll() }
         Spacer(Modifier.height(10.dp))
@@ -130,10 +137,21 @@ fun Servers(vm: AppVm) {
             items(vm.servers, key = { it.tag }) { s ->
                 val p = vm.pings[s.tag]
                 val sel = s.tag == vm.current?.tag
-                Box {
-                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                        .background(if (sel) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent)
-                        .combinedClickable(onClick = { if (!sel) { vm.pick(s.tag); if (on) vm.reconnect(ctx) } }, onLongClick = { menu = s.tag })
+                var dx by remember(s.tag) { mutableStateOf(0f) }
+                val shift by animateFloatAsState(dx, label = "swipe")
+                Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))) {
+                    if (shift > 4f) Row(Modifier.matchParentSize().padding(start = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Ico(4, Ok, 18.dp); Spacer(Modifier.width(8.dp)); Text("Пинг", color = Ok, fontSize = 14.sp)
+                    }
+                    Row(Modifier.fillMaxWidth().offset { IntOffset(shift.roundToInt(), 0) }.clip(RoundedCornerShape(12.dp))
+                        .background(if (sel) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.background)
+                        .pointerInput(s.tag) {
+                            detectHorizontalDragGestures(
+                                onDragEnd = { if (dx > 150f) vm.pingOne(s.tag); dx = 0f },
+                                onDragCancel = { dx = 0f },
+                            ) { change, d -> change.consume(); dx = (dx + d).coerceIn(0f, 240f) }
+                        }
+                        .clickable { if (!sel) { vm.pick(s.tag); if (on) vm.reconnect(ctx) } }
                         .padding(horizontal = 12.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.width(34.dp), contentAlignment = Alignment.CenterStart) { Text(s.flag, fontSize = 24.sp) }
                         Column(Modifier.weight(1f).padding(horizontal = 6.dp)) {
@@ -144,10 +162,6 @@ fun Servers(vm: AppVm) {
                         val col = when { p == null || p < 0 -> MaterialTheme.colorScheme.onSurfaceVariant; p < 120 -> Ok; p < 250 -> Warn; else -> Bad }
                         Text(txt, color = col, fontSize = 13.sp)
                         if (sel) { Spacer(Modifier.width(10.dp)); Box(Modifier.size(7.dp).clip(CircleShape).background(Ok)) }
-                    }
-                    DropdownMenu(menu == s.tag, { menu = null }) {
-                        DropdownMenuItem(text = { Text("Проверить пинг") }, onClick = { menu = null; vm.pingOne(s.tag) })
-                        DropdownMenuItem(text = { Text("Выбрать сервер") }, onClick = { menu = null; vm.pick(s.tag); if (on) vm.reconnect(ctx) })
                     }
                 }
             }
@@ -224,6 +238,7 @@ fun SettingsTab(vm: AppVm) {
         "routing" -> RoutingPage(vm)
         "apps" -> AppsPage(vm)
         "domains" -> DomainsPage(vm)
+        "pre" -> PrePage(vm)
         else -> SettingsMain(vm)
     }
 }
@@ -270,6 +285,7 @@ fun AdvPage(vm: AppVm) {
         SubHead("Дополнительные параметры") { vm.settingsPage = "main" }
         SwitchRow("Автоподключение", "Подключаться при открытии приложения", vm.autoConnect) { vm.changeAuto(it) }
         SwitchRow("Запуск при включении телефона", "Подключаться после перезагрузки (если выдано разрешение VPN)", vm.boot) { vm.changeBoot(it) }
+        NavRow("Предварительная маршрутизация", if (vm.pre.isEmpty()) "" else vm.pre.size.toString()) { vm.settingsPage = "pre" }
         Spacer(Modifier.height(14.dp))
         Panel {
             Text("Блокировка интернета без VPN")
@@ -358,6 +374,49 @@ fun DomainsPage(vm: AppVm) {
                 Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text(d)
                     TextButton({ vm.changeRouting(r.copy(domains = r.domains - d)) }) { Text("Убрать", color = Bad) }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+            }
+        }
+    }
+}
+
+@Composable
+fun PrePage(vm: AppVm) {
+    var t by remember { mutableStateOf("") }
+    var srv by remember { mutableStateOf(vm.current?.tag ?: "") }
+    var open by remember { mutableStateOf(false) }
+    val rules = vm.pre
+    fun add() {
+        val d = Api.normDomain(t)
+        if (d.contains('.') && srv.isNotEmpty() && rules.none { it.domain == d }) vm.changePre(rules + PreRule(d, srv))
+        t = ""
+    }
+    Column(Modifier.fillMaxSize()) {
+        SubHead("Предварительная маршрутизация") { vm.settingsPage = "adv" }
+        Muted("Домены из списка всегда идут через выбранный сервер, независимо от обычной маршрутизации. Если сервер не отвечает, соединение блокируется. Правила по приложениям на Android недоступны: система не позволяет разным приложениям использовать разные серверы.", 13)
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(t, { t = it }, Modifier.fillMaxWidth(), singleLine = true, placeholder = { Text("example.com") }, shape = RoundedCornerShape(12.dp))
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f)) {
+                OutlinedButton({ open = true }, Modifier.fillMaxWidth()) { Text(vm.servers.firstOrNull { it.tag == srv }?.label ?: "Выберите сервер", maxLines = 1) }
+                DropdownMenu(open, { open = false }) {
+                    vm.servers.forEach { s -> DropdownMenuItem(text = { Text(s.label) }, onClick = { srv = s.tag; open = false }) }
+                }
+            }
+            Spacer(Modifier.width(8.dp))
+            Button({ add() }, enabled = t.isNotBlank() && srv.isNotEmpty()) { Text("Добавить") }
+        }
+        Spacer(Modifier.height(8.dp))
+        LazyColumn {
+            items(rules, key = { it.domain }) { r ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(r.domain)
+                        Muted("→ " + (vm.servers.firstOrNull { it.tag == r.server }?.label ?: (r.server + " (нет в списке, трафик блокируется)")), 12)
+                    }
+                    TextButton({ vm.changePre(rules - r) }) { Text("Убрать", color = Bad) }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline)
             }

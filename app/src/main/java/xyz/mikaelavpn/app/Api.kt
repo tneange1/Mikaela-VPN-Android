@@ -55,6 +55,7 @@ data class PayMethod(val id: String, val name: String, val minKopeks: Long, val 
 data class DevPrice(val cur: Int?, val max: Int?, val canAdd: Int?, val per: Long?, val total: Long?, val days: Int?, val blocked: Boolean)
 data class AuthOpts(val email: Boolean = true, val reg: Boolean = true, val telegram: Boolean = false, val oauth: List<Pair<String, String>> = emptyList())
 data class TgSession(val token: String, val bot: String, val expires: Int)
+data class PreRule(val domain: String, val server: String)
 data class Routing(val mode: String = "bypass", val apps: List<String> = emptyList(), val domains: List<String> = emptyList())
 
 private fun JSONObject.num(vararg k: String): Double? {
@@ -429,11 +430,63 @@ object Api {
         store.routing = JSONObject().put("mode", r.mode).put("apps", JSONArray(r.apps)).put("domains", JSONArray(r.domains)).toString()
     }
 
+    // ---------- предварительная маршрутизация: домен -> конкретный сервер ----------
+    fun pre(): List<PreRule> = try {
+        val a = JSONArray(store.pre ?: "[]")
+        (0 until a.length()).mapNotNull { i -> a.optJSONObject(i)?.let { PreRule(it.optString("d"), it.optString("s")) }?.takeIf { it.domain.isNotEmpty() && it.server.isNotEmpty() } }
+    } catch (e: Exception) { emptyList() }
+
+    fun savePre(l: List<PreRule>) {
+        store.pre = JSONArray(l.map { JSONObject().put("d", it.domain).put("s", it.server) }).toString()
+    }
+
+    private fun nodesOf(cfg: JSONObject): List<JSONObject> {
+        val outs = cfg.optJSONArray("outbounds") ?: return emptyList()
+        val prox = (0 until outs.length()).mapNotNull { outs.optJSONObject(it) }.filter { isProxy(it) }
+        val sel = cfg.optJSONObject("routing")?.optJSONArray("balancers")?.optJSONObject(0)?.optJSONArray("selector")
+        if (sel != null) {
+            val pre = (0 until sel.length()).map { sel.optString(it) }
+            val m = prox.filter { o -> pre.any { o.optString("tag").startsWith(it) } }
+            if (m.isNotEmpty()) return m
+        }
+        return prox
+    }
+
+    /** Правила предварительной маршрутизации ставятся первыми и работают всегда. Если сервер правила не отвечает, соединение не проходит (никакого запасного пути). */
+    private fun applyPre(c: JSONObject, pre: List<PreRule>, all: List<Srv>) {
+        val outs = c.optJSONArray("outbounds") ?: JSONArray().also { c.put("outbounds", it) }
+        val routing = c.optJSONObject("routing") ?: JSONObject().also { c.put("routing", it) }
+        val old = routing.optJSONArray("rules") ?: JSONArray()
+        val bals = routing.optJSONArray("balancers") ?: JSONArray().also { routing.put("balancers", it) }
+        val rules = JSONArray()
+        var blockAdded = false
+        var i = 0
+        for ((server, rs) in pre.groupBy { it.server }) {
+            val rule = JSONObject().put("type", "field").put("domain", JSONArray(rs.map { "domain:${it.domain}" }))
+            val srv = all.firstOrNull { it.tag == server }
+            val nodes = srv?.let { nodesOf(it.cfg) }.orEmpty()
+            if (nodes.isEmpty()) {
+                if (!blockAdded) { outs.put(JSONObject().put("protocol", "blackhole").put("tag", "mikpre-block")); blockAdded = true }
+                rule.put("outboundTag", "mikpre-block")
+            } else {
+                val prefix = "mikpre$i-"
+                nodes.forEachIndexed { k, n -> outs.put(JSONObject(n.toString()).put("tag", prefix + k)) }
+                if (nodes.size > 1) {
+                    bals.put(JSONObject().put("tag", "mikpreB$i").put("selector", JSONArray().put(prefix)).put("strategy", JSONObject().put("type", "random")))
+                    rule.put("balancerTag", "mikpreB$i")
+                } else rule.put("outboundTag", prefix + "0")
+            }
+            rules.put(rule); i++
+        }
+        for (k in 0 until old.length()) rules.put(old.get(k))
+        routing.put("rules", rules)
+    }
+
     fun normDomain(s: String): String =
         s.trim().lowercase().removePrefix("https://").removePrefix("http://").removePrefix("*.").removePrefix(".").split('/', ':', '?', '#')[0]
 
     /** Конфиг для Xray: конфиг панели как есть, входящие заменяются на TUN, плюс доменные правила пользователя. */
-    fun buildXrayConfig(s: Srv, rt: Routing): String {
+    fun buildXrayConfig(s: Srv, rt: Routing, pre: List<PreRule> = emptyList(), all: List<Srv> = emptyList()): String {
         val c = JSONObject(s.cfg.toString())
         c.put("log", JSONObject().put("loglevel", "warning"))
         val tun = JSONObject().put("tag", "tun-in").put("protocol", "tun")
@@ -467,6 +520,7 @@ object Api {
             }
             routing.put("rules", rules)
         }
+        if (pre.isNotEmpty()) applyPre(c, pre, all)
         return c.toString()
     }
 
