@@ -28,6 +28,10 @@ class AppVm(app: Application) : AndroidViewModel(app) {
     var selected by mutableStateOf(Api.store.server ?: "")
     var theme by mutableStateOf(Api.store.theme)
     var newVersion by mutableStateOf<String?>(null)
+    var updState by mutableStateOf("idle")   // idle, downloading, ready, installing, error
+    var updPercent by mutableStateOf(0)
+    var updError by mutableStateOf("")
+    private var updFile: File? = null
     var connecting by mutableStateOf(false)
     var toast by mutableStateOf("")
     var sheet by mutableStateOf("")
@@ -56,6 +60,28 @@ class AppVm(app: Application) : AndroidViewModel(app) {
     private suspend fun checkUpdate() {
         val v = Api.latestVersion() ?: return
         newVersion = if (Api.isNewer(v, BuildConfig.VERSION_NAME)) v else null
+        if (newVersion != null && updState == "idle") downloadUpdate()   // как только релиз готов, обновление сразу скачивается в фоне
+    }
+
+    fun downloadUpdate() {
+        if (updState == "downloading") return
+        updState = "downloading"; updPercent = 0; updError = ""; Updater.error = ""
+        viewModelScope.launch {
+            try { updFile = Updater.download(getApplication(), { updPercent = it }); updState = "ready" }
+            catch (e: Exception) { updState = "error"; updError = e.message ?: "ошибка сети" }
+        }
+    }
+
+    fun installUpdate(ctx: Context) {
+        val f = updFile
+        if (f == null || !f.exists()) { downloadUpdate(); return }
+        if (!Updater.canInstall(ctx)) { say("Разрешите установку обновлений и вернитесь в приложение"); Updater.askPermission(ctx); return }
+        try {
+            Api.store.resume = VpnSvc.state.value
+            Updater.error = ""; updState = "installing"
+            Updater.install(ctx, f)
+            viewModelScope.launch { delay(20_000); if (updState == "installing") updState = "ready" }
+        } catch (e: Exception) { updState = "ready"; Updater.error = e.message ?: "Не удалось установить" }
     }
 
     fun say(t: String) { toast = t }

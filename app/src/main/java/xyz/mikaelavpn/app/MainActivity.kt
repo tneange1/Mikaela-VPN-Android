@@ -56,19 +56,35 @@ fun Root(vm: AppVm) {
             if (vm.screen == "login") LoginScreen(vm) else MainScreen(vm)
         }
         IntroDialog(vm)
-        if (force) UpdateDialog(vm.newVersion!!)
+        if (force) UpdateDialog(vm)
     }
 }
 
 @Composable
-fun UpdateDialog(v: String) {
+fun UpdateDialog(vm: AppVm) {
     val ctx = LocalContext.current
+    val v = vm.newVersion ?: return
+    LaunchedEffect(Updater.error) { if (Updater.error.isNotEmpty() && vm.updState == "installing") vm.updState = "ready" }
     AlertDialog(
         onDismissRequest = {},
         title = { Text("Доступно обновление v$v") },
-        text = { Text("Чтобы продолжить пользоваться приложением, обновите его до последней версии.") },
+        text = {
+            Column {
+                Text(when (vm.updState) {
+                    "downloading" -> "Загружаю обновление… ${vm.updPercent}%"
+                    "ready" -> "Обновление загружено. Нажмите «Установить»: приложение обновится без ручного скачивания файла."
+                    "installing" -> "Устанавливаю… приложение перезапустится само."
+                    "error" -> "Не удалось загрузить обновление: ${vm.updError}"
+                    else -> "Подготавливаю обновление…"
+                })
+                if (vm.updState == "downloading") LinearProgressIndicator(progress = { vm.updPercent / 100f }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp))
+                if (Updater.error.isNotEmpty()) Text(Updater.error, color = Bad, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
+            }
+        },
         confirmButton = {
-            Button(onClick = { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(Api.APK_URL))) }) { Text("Обновить") }
+            Button(onClick = { if (vm.updState == "ready") vm.installUpdate(ctx) else vm.downloadUpdate() }, enabled = vm.updState in listOf("ready", "error", "idle")) {
+                Text(when (vm.updState) { "ready" -> "Установить"; "error" -> "Повторить"; "installing" -> "Устанавливаю…"; else -> "Загружаю…" })
+            }
         },
     )
 }
