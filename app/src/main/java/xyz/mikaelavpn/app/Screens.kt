@@ -123,16 +123,19 @@ fun ActionRow(icon: Int, text: String, enabled: Boolean = true, onClick: () -> U
 fun Servers(vm: AppVm) {
     val ctx = LocalContext.current
     val on by VpnSvc.state.collectAsStateWithLifecycle()
+    var q by remember { mutableStateOf("") }
     Column(Modifier.fillMaxSize()) {
         Title("Серверы", "Нажмите — выбрать, свайп вправо — проверить пинг")
         val answered = vm.servers.count { (vm.pings[it.tag] ?: 0) > 0 }; val checked = vm.servers.count { vm.pings[it.tag] != null }
         Muted("Всего серверов: ${vm.servers.size}" + if (checked > 0) " · отвечают: $answered из $checked" else "", 13)
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(q, { q = it }, Modifier.fillMaxWidth(), singleLine = true, placeholder = { Text("Поиск сервера") }, shape = RoundedCornerShape(12.dp))
+        Spacer(Modifier.height(10.dp))
         ActionRow(4, "Тест пинга") { vm.pingAll() }
         if (vm.error.isNotEmpty()) Text(vm.error, color = Bad, fontSize = 13.sp, modifier = Modifier.padding(top = 10.dp))
         Spacer(Modifier.height(10.dp))
         LazyColumn(contentPadding = PaddingValues(bottom = 16.dp)) {
-            items(vm.servers, key = { it.tag }) { s ->
+            items(vm.servers.filter { q.isBlank() || it.label.contains(q, true) || it.tag.contains(q, true) }, key = { it.tag }) { s ->
                 val p = vm.pings[s.tag]
                 val sel = s.tag == vm.current?.tag
                 var dx by remember(s.tag) { mutableStateOf(0f) }
@@ -378,6 +381,7 @@ fun DomainsPage(vm: AppVm) {
 fun RuleDialog(vm: AppVm, d: DomRule, onClose: () -> Unit, onSave: (DomRule) -> Unit) {
     var act by remember { mutableStateOf(d.action) }
     var sel by remember { mutableStateOf(d.servers.toSet()) }
+    var q by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onClose,
         title = { Text(d.value) },
@@ -391,8 +395,9 @@ fun RuleDialog(vm: AppVm, d: DomRule, onClose: () -> Unit, onSave: (DomRule) -> 
                 if (act == "direct") { Spacer(Modifier.height(8.dp)); Muted("Обход туннеля: трафик идёт мимо VPN.", 12) }
                 else {
                     Spacer(Modifier.height(8.dp)); Muted("Выберите один или несколько серверов. Если выбрано несколько, трафик распределяется между ними.", 12)
-                    LazyColumn(Modifier.heightIn(max = 280.dp)) {
-                        items(vm.servers, key = { it.tag }) { s ->
+                    OutlinedTextField(q, { q = it }, Modifier.fillMaxWidth().padding(top = 8.dp), singleLine = true, placeholder = { Text("Поиск сервера") }, shape = RoundedCornerShape(12.dp))
+                    LazyColumn(Modifier.heightIn(max = 260.dp)) {
+                        items(vm.servers.filter { q.isBlank() || it.label.contains(q, true) || it.tag.contains(q, true) }, key = { it.tag }) { s ->
                             val on = s.tag in sel
                             Row(Modifier.fillMaxWidth().clickable { sel = if (on) sel - s.tag else sel + s.tag }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Text(s.flag, fontSize = 20.sp); Spacer(Modifier.width(8.dp)); Text(s.label, Modifier.weight(1f), maxLines = 1)
