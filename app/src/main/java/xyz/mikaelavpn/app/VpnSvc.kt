@@ -65,14 +65,8 @@ class VpnSvc : VpnService() {
                 .addRoute("0.0.0.0", 0).addRoute("::", 0)
                 .addDnsServer("1.1.1.1").addDnsServer("8.8.8.8")
             // Xray работает в нашем процессе: само приложение всегда вне туннеля (иначе петля, и пинг был бы ненастоящим)
-            if (rt.mode == "only" && rt.apps.isNotEmpty()) {
-                var n = 0
-                for (a in rt.apps) try { b.addAllowedApplication(a); n++ } catch (_: Exception) {}
-                if (n == 0) b.addDisallowedApplication(packageName)
-            } else {
-                b.addDisallowedApplication(packageName)
-                if (rt.mode == "bypass") for (a in rt.apps) try { b.addDisallowedApplication(a) } catch (_: Exception) {}
-            }
+            b.addDisallowedApplication(packageName)
+            for (a in rt.apps) try { b.addDisallowedApplication(a) } catch (_: Exception) {}
             val pfd: ParcelFileDescriptor = b.establish() ?: throw Exception("Разрешение на VPN не выдано")
             val fd = pfd.detachFd()
             try {

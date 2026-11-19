@@ -129,8 +129,6 @@ fun Servers(vm: AppVm) {
         Muted("Всего серверов: ${vm.servers.size}" + if (checked > 0) " · отвечают: $answered из $checked" else "", 13)
         Spacer(Modifier.height(14.dp))
         ActionRow(4, "Тест пинга") { vm.pingAll() }
-        Spacer(Modifier.height(10.dp))
-        ActionRow(5, "Обновить", !vm.busy) { vm.refresh() }
         if (vm.error.isNotEmpty()) Text(vm.error, color = Bad, fontSize = 13.sp, modifier = Modifier.padding(top = 10.dp))
         Spacer(Modifier.height(10.dp))
         LazyColumn(contentPadding = PaddingValues(bottom = 16.dp)) {
@@ -238,7 +236,6 @@ fun SettingsTab(vm: AppVm) {
         "routing" -> RoutingPage(vm)
         "apps" -> AppsPage(vm)
         "domains" -> DomainsPage(vm)
-        "pre" -> PrePage(vm)
         else -> SettingsMain(vm)
     }
 }
@@ -255,21 +252,15 @@ fun SubHead(title: String, back: () -> Unit) {
 fun SettingsMain(vm: AppVm) {
     val ctx = LocalContext.current
     val themes = listOf("system" to "Как в системе", "light" to "Белая", "gray" to "Серая", "dark" to "Чёрная")
-    val ivs = listOf("60000" to "1 мин", "300000" to "5 мин", "900000" to "15 мин", "1800000" to "30 мин", "3600000" to "1 час")
     Column(Modifier.fillMaxSize()) {
         Title("Настройки")
         Spacer(Modifier.height(12.dp))
         NavRow("Дополнительные параметры") { vm.settingsPage = "adv" }
-        NavRow("Маршрутизация", if (vm.routing.apps.isNotEmpty() || vm.routing.domains.isNotEmpty()) "${vm.routing.apps.size + vm.routing.domains.size}" else "") { vm.settingsPage = "routing" }
+        NavRow("Маршрутизация", (vm.routing.apps.size + vm.routing.rules.size).let { if (it > 0) "$it" else "" }) { vm.settingsPage = "routing" }
         Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("Тема"); Pick(vm.theme, themes) { vm.changeTheme(it) }
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-        Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("Автообновление серверов"); Pick(vm.interval.toString(), ivs) { vm.changeInterval(it.toLong()) }
-        }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-        KV("Версия", "v" + BuildConfig.VERSION_NAME)
         TextButton({ vm.openGuide() }, contentPadding = PaddingValues(0.dp)) { Text("Показать инструкцию") }
         Spacer(Modifier.height(10.dp))
         Muted(Api.store.email ?: "", 13)
@@ -285,7 +276,6 @@ fun AdvPage(vm: AppVm) {
         SubHead("Дополнительные параметры") { vm.settingsPage = "main" }
         SwitchRow("Автоподключение", "Подключаться при открытии приложения", vm.autoConnect) { vm.changeAuto(it) }
         SwitchRow("Запуск при включении телефона", "Подключаться после перезагрузки (если выдано разрешение VPN)", vm.boot) { vm.changeBoot(it) }
-        NavRow("Предварительная маршрутизация", if (vm.pre.isEmpty()) "" else vm.pre.size.toString()) { vm.settingsPage = "pre" }
         Spacer(Modifier.height(14.dp))
         Panel {
             Text("Блокировка интернета без VPN")
@@ -303,14 +293,10 @@ fun RoutingPage(vm: AppVm) {
     val r = vm.routing
     Column(Modifier.fillMaxSize()) {
         SubHead("Маршрутизация") { vm.settingsPage = "main" }
-        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            for ((k, tt) in listOf("bypass" to "Все, кроме выбранных", "only" to "Только выбранные"))
-                Chip(tt, r.mode == k, Modifier.weight(1f)) { vm.changeRouting(r.copy(mode = k)) }
-        }
-        Muted(if (r.mode == "only") "Через VPN пойдёт только выбранное, остальное — напрямую." else "Выбранное пойдёт напрямую, остальное — через VPN.")
+        Muted("Домены можно пустить напрямую, минуя VPN, или всегда через выбранные серверы. Если такой сервер не отвечает, соединение блокируется. Приложения идут напрямую: Android не позволяет отправлять разные приложения на разные серверы.", 13)
         Spacer(Modifier.height(10.dp))
         NavRow("Маршрутизация приложений", if (r.apps.isEmpty()) "" else r.apps.size.toString()) { vm.settingsPage = "apps" }
-        NavRow("Маршрутизация доменов", if (r.domains.isEmpty()) "" else r.domains.size.toString()) { vm.settingsPage = "domains" }
+        NavRow("Маршрутизация доменов", if (r.rules.isEmpty()) "" else r.rules.size.toString()) { vm.settingsPage = "domains" }
     }
 }
 
@@ -355,71 +341,71 @@ fun AppsPage(vm: AppVm) {
 @Composable
 fun DomainsPage(vm: AppVm) {
     var t by remember { mutableStateOf("") }
+    var edit by remember { mutableStateOf<DomRule?>(null) }
     val r = vm.routing
     fun add() {
-        val d = Api.normDomain(t)
-        if (d.isNotEmpty() && d !in r.domains) vm.changeRouting(r.copy(domains = r.domains + d))
+        val have = r.rules.map { it.value }.toMutableSet(); val add = ArrayList<DomRule>()
+        for (p in t.split(Regex("[\\s,;]+")).filter { it.isNotBlank() }) { val d = Api.normDomain(p); if (d.isNotEmpty() && have.add(d)) add.add(DomRule(d)) }
+        if (add.isNotEmpty()) vm.changeRouting(r.copy(rules = r.rules + add)) else vm.say("Неверный домен или он уже есть в списке")
         t = ""
     }
     Column(Modifier.fillMaxSize()) {
         SubHead("Домены") { vm.settingsPage = "routing" }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(t, { t = it }, Modifier.weight(1f), singleLine = true, placeholder = { Text("example.com") }, shape = RoundedCornerShape(12.dp))
+            OutlinedTextField(t, { t = it }, Modifier.weight(1f), singleLine = true, placeholder = { Text("example.com или .ru") }, shape = RoundedCornerShape(12.dp))
             Spacer(Modifier.width(8.dp))
-            Button({ add() }, enabled = t.isNotBlank(), shape = RoundedCornerShape(12.dp)) { Text("Добавить") }
+            Button({ add() }, enabled = t.isNotBlank()) { Text("Добавить") }
         }
-        Muted("Поддомены учитываются автоматически.")
+        Muted("Домен example.com включает поддомены. Доменная зона начинается с точки: .ru, .su, .рф. Можно сразу несколько через пробел или запятую. Новое правило идёт напрямую, кнопка настройки справа меняет это.", 12)
         LazyColumn {
-            items(r.domains, key = { it }) { d ->
-                Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text(d)
-                    TextButton({ vm.changeRouting(r.copy(domains = r.domains - d)) }) { Text("Убрать", color = Bad) }
+            items(r.rules, key = { it.value }) { d ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(d.value)
+                        Muted(if (d.action == "server") "→ " + d.servers.joinToString(", ") { tg -> vm.servers.firstOrNull { it.tag == tg }?.label ?: "$tg (нет в списке)" } else "Напрямую (мимо VPN)", 12)
+                    }
+                    Box(Modifier.size(40.dp).clip(CircleShape).clickable { edit = d }, contentAlignment = Alignment.Center) { Ico(3, MaterialTheme.colorScheme.onSurfaceVariant, 20.dp) }
+                    TextButton({ vm.changeRouting(r.copy(rules = r.rules - d)) }) { Text("Убрать", color = Bad) }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline)
             }
         }
     }
+    edit?.let { d -> RuleDialog(vm, d, { edit = null }) { n -> vm.changeRouting(vm.routing.copy(rules = vm.routing.rules.map { if (it.value == d.value) n else it })); edit = null } }
 }
 
 @Composable
-fun PrePage(vm: AppVm) {
-    var t by remember { mutableStateOf("") }
-    var srv by remember { mutableStateOf(vm.current?.tag ?: "") }
-    var open by remember { mutableStateOf(false) }
-    val rules = vm.pre
-    fun add() {
-        val d = Api.normDomain(t)
-        if (d.contains('.') && srv.isNotEmpty() && rules.none { it.domain == d }) vm.changePre(rules + PreRule(d, srv))
-        t = ""
-    }
-    Column(Modifier.fillMaxSize()) {
-        SubHead("Предварительная маршрутизация") { vm.settingsPage = "adv" }
-        Muted("Домены из списка всегда идут через выбранный сервер, независимо от обычной маршрутизации. Если сервер не отвечает, соединение блокируется. Правила по приложениям на Android недоступны: система не позволяет разным приложениям использовать разные серверы.", 13)
-        Spacer(Modifier.height(10.dp))
-        OutlinedTextField(t, { t = it }, Modifier.fillMaxWidth(), singleLine = true, placeholder = { Text("example.com") }, shape = RoundedCornerShape(12.dp))
-        Spacer(Modifier.height(8.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.weight(1f)) {
-                OutlinedButton({ open = true }, Modifier.fillMaxWidth()) { Text(vm.servers.firstOrNull { it.tag == srv }?.label ?: "Выберите сервер", maxLines = 1) }
-                DropdownMenu(open, { open = false }) {
-                    vm.servers.forEach { s -> DropdownMenuItem(text = { Text(s.label) }, onClick = { srv = s.tag; open = false }) }
+fun RuleDialog(vm: AppVm, d: DomRule, onClose: () -> Unit, onSave: (DomRule) -> Unit) {
+    var act by remember { mutableStateOf(d.action) }
+    var sel by remember { mutableStateOf(d.servers.toSet()) }
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text(d.value) },
+        text = {
+            Column {
+                Muted("Куда направлять трафик", 13)
+                Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Chip("Напрямую", act == "direct", Modifier.weight(1f)) { act = "direct" }
+                    Chip("На серверы", act == "server", Modifier.weight(1f)) { act = "server" }
                 }
-            }
-            Spacer(Modifier.width(8.dp))
-            Button({ add() }, enabled = t.isNotBlank() && srv.isNotEmpty()) { Text("Добавить") }
-        }
-        Spacer(Modifier.height(8.dp))
-        LazyColumn {
-            items(rules, key = { it.domain }) { r ->
-                Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(r.domain)
-                        Muted("→ " + (vm.servers.firstOrNull { it.tag == r.server }?.label ?: (r.server + " (нет в списке, трафик блокируется)")), 12)
+                if (act == "direct") { Spacer(Modifier.height(8.dp)); Muted("Обход туннеля: трафик идёт мимо VPN.", 12) }
+                else {
+                    Spacer(Modifier.height(8.dp)); Muted("Выберите один или несколько серверов. Если выбрано несколько, трафик распределяется между ними.", 12)
+                    LazyColumn(Modifier.heightIn(max = 280.dp)) {
+                        items(vm.servers, key = { it.tag }) { s ->
+                            val on = s.tag in sel
+                            Row(Modifier.fillMaxWidth().clickable { sel = if (on) sel - s.tag else sel + s.tag }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(s.flag, fontSize = 20.sp); Spacer(Modifier.width(8.dp)); Text(s.label, Modifier.weight(1f), maxLines = 1)
+                                Checkbox(on, { sel = if (on) sel - s.tag else sel + s.tag })
+                            }
+                        }
                     }
-                    TextButton({ vm.changePre(rules - r) }) { Text("Убрать", color = Bad) }
                 }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
             }
-        }
-    }
+        },
+        confirmButton = {
+            Button({ if (act == "server" && sel.isEmpty()) vm.say("Выберите хотя бы один сервер") else onSave(DomRule(d.value, act, if (act == "server") vm.servers.map { it.tag }.filter { it in sel } else emptyList())) }) { Text("Сохранить") }
+        },
+        dismissButton = { OutlinedButton(onClose) { Text("Отмена") } },
+    )
 }

@@ -34,10 +34,8 @@ class AppVm(app: Application) : AndroidViewModel(app) {
     var settingsPage by mutableStateOf("main")
     var routing by mutableStateOf(Api.routing())
     var routingDirty by mutableStateOf(false)
-    var pre by mutableStateOf(Api.pre())
     var autoConnect by mutableStateOf(Api.store.autoConnect)
     var boot by mutableStateOf(Api.store.boot)
-    var interval by mutableStateOf(Api.store.interval)
     var stale by mutableStateOf(Api.cachedServers().isNotEmpty())
 
     var introKind by mutableStateOf("")
@@ -51,8 +49,8 @@ class AppVm(app: Application) : AndroidViewModel(app) {
     init {
         initIntro()
         if (screen == "main") refresh()
-        viewModelScope.launch { while (true) { checkUpdate(); delay(3 * 60 * 1000L) } }
-        viewModelScope.launch { while (true) { delay(Api.store.interval); if (screen == "main") refresh(true) } }
+        // раз в минуту: свежий список серверов и проверка, не вышел ли готовый релиз (отдельных таймеров и кнопок нет)
+        viewModelScope.launch { while (true) { checkUpdate(); delay(60_000L); if (screen == "main") refresh(true) } }
     }
 
     private suspend fun checkUpdate() {
@@ -192,7 +190,8 @@ class AppVm(app: Application) : AndroidViewModel(app) {
     fun pingAll() {
         viewModelScope.launch {
             pings = emptyMap()
-            for (s in servers) pings = pings + (s.tag to Api.ping(s))   // по очереди: результат каждого виден сразу
+            // все серверы сразу; результат каждого появляется, как только он ответил
+            servers.forEach { s -> launch { val p = Api.ping(s); pings = pings + (s.tag to p) } }
         }
     }
 
@@ -210,14 +209,12 @@ class AppVm(app: Application) : AndroidViewModel(app) {
     fun changeTheme(t: String) { theme = t; Api.store.theme = t }
     fun changeAuto(v: Boolean) { autoConnect = v; Api.store.autoConnect = v }
     fun changeBoot(v: Boolean) { boot = v; Api.store.boot = v }
-    fun changeInterval(v: Long) { interval = v; Api.store.interval = v }
-    fun changePre(l: List<PreRule>) { pre = l; Api.savePre(l); routingDirty = true }
     fun changeRouting(r: Routing) { routing = r; Api.saveRouting(r); routingDirty = true }
 
     // ---------- VPN ----------
     fun writeConfig(ctx: Context): Boolean {
         val s = current ?: return false
-        File(ctx.filesDir, "xray.json").writeText(Api.buildXrayConfig(s, routing, pre, servers))
+        File(ctx.filesDir, "xray.json").writeText(Api.buildXrayConfig(s, routing, servers))
         return true
     }
 

@@ -55,8 +55,9 @@ data class PayMethod(val id: String, val name: String, val minKopeks: Long, val 
 data class DevPrice(val cur: Int?, val max: Int?, val canAdd: Int?, val per: Long?, val total: Long?, val days: Int?, val blocked: Boolean)
 data class AuthOpts(val email: Boolean = true, val reg: Boolean = true, val telegram: Boolean = false, val oauth: List<Pair<String, String>> = emptyList())
 data class TgSession(val token: String, val bot: String, val expires: Int)
-data class PreRule(val domain: String, val server: String)
-data class Routing(val mode: String = "bypass", val apps: List<String> = emptyList(), val domains: List<String> = emptyList())
+/** value: «example.com» (домен с поддоменами) или «.ru» (доменная зона). action: direct (мимо VPN) или server (на выбранные серверы). */
+data class DomRule(val value: String, val action: String = "direct", val servers: List<String> = emptyList())
+data class Routing(val apps: List<String> = emptyList(), val rules: List<DomRule> = emptyList())
 
 private fun JSONObject.num(vararg k: String): Double? {
     for (x in k) if (has(x) && !isNull(x)) {
@@ -423,22 +424,40 @@ object Api {
     fun routing(): Routing = try {
         val j = JSONObject(store.routing ?: "{}")
         fun list(k: String) = j.optJSONArray(k)?.let { a -> (0 until a.length()).map { a.optString(it) } } ?: emptyList()
-        Routing(if (j.optString("mode") == "only") "only" else "bypass", list("apps"), list("domains"))
+        val rules = ArrayList<DomRule>()
+        val ra = j.optJSONArray("rules")
+        if (ra != null) {
+            for (i in 0 until ra.length()) ra.optJSONObject(i)?.let { o ->
+                val sv = o.optJSONArray("s")?.let { a -> (0 until a.length()).map { a.optString(it) } } ?: emptyList()
+                rules.add(DomRule(o.optString("v"), if (o.optString("a") == "server" && sv.isNotEmpty()) "server" else "direct", sv))
+            }
+        } else {
+            // миграция со старых версий: домены «напрямую» и отдельная предварительная маршрутизация
+            list("domains").forEach { rules.add(DomRule(it)) }
+            try {
+                val pa = JSONArray(store.pre ?: "[]")
+                for (i in 0 until pa.length()) pa.optJSONObject(i)?.let { o -> rules.add(DomRule(o.optString("d"), "server", listOf(o.optString("s")))) }
+            } catch (_: Exception) {}
+        }
+        Routing(list("apps"), rules.filter { it.value.isNotEmpty() })
     } catch (e: Exception) { Routing() }
 
     fun saveRouting(r: Routing) {
-        store.routing = JSONObject().put("mode", r.mode).put("apps", JSONArray(r.apps)).put("domains", JSONArray(r.domains)).toString()
+        store.routing = JSONObject().put("apps", JSONArray(r.apps))
+            .put("rules", JSONArray(r.rules.map { JSONObject().put("v", it.value).put("a", it.action).put("s", JSONArray(it.servers)) })).toString()
+        store.pre = null
     }
 
-    // ---------- предварительная маршрутизация: домен -> конкретный сервер ----------
-    fun pre(): List<PreRule> = try {
-        val a = JSONArray(store.pre ?: "[]")
-        (0 until a.length()).mapNotNull { i -> a.optJSONObject(i)?.let { PreRule(it.optString("d"), it.optString("s")) }?.takeIf { it.domain.isNotEmpty() && it.server.isNotEmpty() } }
-    } catch (e: Exception) { emptyList() }
-
-    fun savePre(l: List<PreRule>) {
-        store.pre = JSONArray(l.map { JSONObject().put("d", it.domain).put("s", it.server) }).toString()
+    /** «example.com» -> домен, «.ru» / «.рф» -> зона; пустая строка, если значение неверное. */
+    fun normDomain(s: String): String {
+        var v = s.trim().lowercase().removePrefix("https://").removePrefix("http://").split('/', ':', '?', '#')[0].trimStart('*')
+        val zone = v.startsWith(".")
+        v = v.trim('.')
+        val a = try { java.net.IDN.toASCII(v) } catch (_: Exception) { return "" }
+        if (v.isEmpty() || !Regex("^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$").matches(a) || (!zone && !a.contains('.'))) return ""
+        return (if (zone) "." else "") + v
     }
+    private fun xrayDomain(v: String) = "domain:" + java.net.IDN.toASCII(v.trimStart('.'))
 
     private fun nodesOf(cfg: JSONObject): List<JSONObject> {
         val outs = cfg.optJSONArray("outbounds") ?: return emptyList()
@@ -452,41 +471,38 @@ object Api {
         return prox
     }
 
-    /** Правила предварительной маршрутизации ставятся первыми и работают всегда. Если сервер правила не отвечает, соединение не проходит (никакого запасного пути). */
-    private fun applyPre(c: JSONObject, pre: List<PreRule>, all: List<Srv>) {
+    /** Правила «на сервер» ставятся первыми и работают всегда. Если сервер не отвечает, соединение не проходит (запасного пути нет). */
+    private fun applyServerRules(c: JSONObject, rs: List<DomRule>, all: List<Srv>) {
         val outs = c.optJSONArray("outbounds") ?: JSONArray().also { c.put("outbounds", it) }
         val routing = c.optJSONObject("routing") ?: JSONObject().also { c.put("routing", it) }
         val old = routing.optJSONArray("rules") ?: JSONArray()
         val bals = routing.optJSONArray("balancers") ?: JSONArray().also { routing.put("balancers", it) }
         val rules = JSONArray()
         var blockAdded = false
-        var i = 0
-        for ((server, rs) in pre.groupBy { it.server }) {
-            val rule = JSONObject().put("type", "field").put("domain", JSONArray(rs.map { "domain:${it.domain}" }))
-            val srv = all.firstOrNull { it.tag == server }
-            val nodes = srv?.let { nodesOf(it.cfg) }.orEmpty()
-            if (nodes.isEmpty()) {
+        var gi = 0
+        for ((_, group) in rs.groupBy { it.servers.joinToString("|") }) {
+            val rule = JSONObject().put("type", "field").put("domain", JSONArray(group.map { xrayDomain(it.value) }))
+            val prefix = "mikpre$gi-"
+            var n = 0
+            for (tag in group[0].servers) {
+                val srv = all.firstOrNull { it.tag == tag } ?: continue
+                for (node in nodesOf(srv.cfg)) outs.put(JSONObject(node.toString()).put("tag", prefix + (n++)))
+            }
+            if (n == 0) {
                 if (!blockAdded) { outs.put(JSONObject().put("protocol", "blackhole").put("tag", "mikpre-block")); blockAdded = true }
                 rule.put("outboundTag", "mikpre-block")
-            } else {
-                val prefix = "mikpre$i-"
-                nodes.forEachIndexed { k, n -> outs.put(JSONObject(n.toString()).put("tag", prefix + k)) }
-                if (nodes.size > 1) {
-                    bals.put(JSONObject().put("tag", "mikpreB$i").put("selector", JSONArray().put(prefix)).put("strategy", JSONObject().put("type", "random")))
-                    rule.put("balancerTag", "mikpreB$i")
-                } else rule.put("outboundTag", prefix + "0")
-            }
-            rules.put(rule); i++
+            } else if (n > 1) {
+                bals.put(JSONObject().put("tag", "mikpreB$gi").put("selector", JSONArray().put(prefix)).put("strategy", JSONObject().put("type", "random")))
+                rule.put("balancerTag", "mikpreB$gi")
+            } else rule.put("outboundTag", prefix + "0")
+            rules.put(rule); gi++
         }
         for (k in 0 until old.length()) rules.put(old.get(k))
         routing.put("rules", rules)
     }
 
-    fun normDomain(s: String): String =
-        s.trim().lowercase().removePrefix("https://").removePrefix("http://").removePrefix("*.").removePrefix(".").split('/', ':', '?', '#')[0]
-
-    /** Конфиг для Xray: конфиг панели как есть, входящие заменяются на TUN, плюс доменные правила пользователя. */
-    fun buildXrayConfig(s: Srv, rt: Routing, pre: List<PreRule> = emptyList(), all: List<Srv> = emptyList()): String {
+    /** Конфиг для Xray: конфиг панели как есть, входящие заменяются на TUN, плюс правила пользователя. */
+    fun buildXrayConfig(s: Srv, rt: Routing, all: List<Srv> = emptyList()): String {
         val c = JSONObject(s.cfg.toString())
         c.put("log", JSONObject().put("loglevel", "warning"))
         val tun = JSONObject().put("tag", "tun-in").put("protocol", "tun")
@@ -495,32 +511,21 @@ object Api {
                 .put("destOverride", JSONArray(listOf("http", "tls", "quic"))))
         c.put("inbounds", JSONArray().put(tun))
 
-        if (rt.domains.isNotEmpty()) {
+        val direct = rt.rules.filter { it.action == "direct" }
+        if (direct.isNotEmpty()) {
             val outs = c.optJSONArray("outbounds") ?: JSONArray().also { c.put("outbounds", it) }
-            var hasDirect = false; var proxyTag: String? = null
-            for (i in 0 until outs.length()) {
-                val o = outs.optJSONObject(i) ?: continue
-                if (o.optString("tag") == "direct") hasDirect = true
-                if (proxyTag == null && isProxy(o)) proxyTag = o.optString("tag")
-            }
+            var hasDirect = false
+            for (i in 0 until outs.length()) if (outs.optJSONObject(i)?.optString("tag") == "direct") hasDirect = true
             if (!hasDirect) outs.put(JSONObject().put("protocol", "freedom").put("tag", "direct"))
             val routing = c.optJSONObject("routing") ?: JSONObject().also { c.put("routing", it) }
             val old = routing.optJSONArray("rules") ?: JSONArray()
-            val doms = JSONArray(rt.domains.map { "domain:$it" })
             val rules = JSONArray()
-            val bal = routing.optJSONArray("balancers")?.optJSONObject(0)?.optString("tag")?.takeIf { it.isNotEmpty() }
-            if (rt.mode == "only") {
-                val r1 = JSONObject().put("type", "field").put("domain", doms)
-                if (bal != null) r1.put("balancerTag", bal) else r1.put("outboundTag", proxyTag ?: "direct")
-                rules.put(r1)
-                rules.put(JSONObject().put("type", "field").put("network", "tcp,udp").put("outboundTag", "direct"))
-            } else {
-                rules.put(JSONObject().put("type", "field").put("domain", doms).put("outboundTag", "direct"))
-                for (i in 0 until old.length()) rules.put(old.get(i))
-            }
+            rules.put(JSONObject().put("type", "field").put("domain", JSONArray(direct.map { xrayDomain(it.value) })).put("outboundTag", "direct"))
+            for (i in 0 until old.length()) rules.put(old.get(i))
             routing.put("rules", rules)
         }
-        if (pre.isNotEmpty()) applyPre(c, pre, all)
+        val srvRules = rt.rules.filter { it.action == "server" && it.servers.isNotEmpty() }
+        if (srvRules.isNotEmpty()) applyServerRules(c, srvRules, all)
         return c.toString()
     }
 
