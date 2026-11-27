@@ -58,9 +58,18 @@ class AppVm(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun checkUpdate() {
-        val v = Api.latestVersion() ?: return
-        newVersion = if (Api.isNewer(v, BuildConfig.VERSION_NAME)) v else null
+        val r = Api.latestRelease(Api.store.channel) ?: return
+        newVersion = if (Api.isNewerRel(r, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE)) r.label else null
         if (newVersion != null && updState == "idle") downloadUpdate()   // как только релиз готов, обновление сразу скачивается в фоне
+    }
+
+    var channel by mutableStateOf(Api.store.channel)
+
+    fun changeChannel(ch: String) {
+        if (ch == channel) return
+        Api.store.channel = ch; channel = ch
+        newVersion = null; updFile = null; updState = "idle"; updError = ""
+        viewModelScope.launch { checkUpdate() }
     }
 
     fun downloadUpdate() {

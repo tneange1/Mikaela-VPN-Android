@@ -560,17 +560,34 @@ object Api {
     }
 
     // ---------- обновления приложения ----------
-    const val RELEASES_API = "https://api.github.com/repos/tneange1/Mikaela-VPN-Android/releases/latest"
-    const val APK_URL = "https://github.com/tneange1/Mikaela-VPN-Android/releases/latest/download/Mikaela-VPN.apk"
+    const val REPO = "tneange1/Mikaela-VPN-Android"
 
-    suspend fun latestVersion(): String? = withContext(Dispatchers.IO) {
+    /** stable — обычные релизы; ptb и dev — постоянные пререлизы с тегами ptb и dev (в описании «version:» и «build:»). */
+    fun apkUrl(ch: String) = if (ch == "stable") "https://github.com/$REPO/releases/latest/download/Mikaela-VPN.apk"
+        else "https://github.com/$REPO/releases/download/$ch/Mikaela-VPN.apk"
+
+    class Rel(val version: String, val build: Int?, val channel: String) {
+        val label get() = if (channel == "stable") version else "$version ($channel${build?.let { ", сборка $it" } ?: ""})"
+    }
+
+    suspend fun latestRelease(ch: String): Rel? = withContext(Dispatchers.IO) {
         try {
-            val req = Request.Builder().url(RELEASES_API).header("Accept", "application/vnd.github+json").build()
+            val path = if (ch == "stable") "latest" else "tags/$ch"
+            val req = Request.Builder().url("https://api.github.com/repos/$REPO/releases/$path").header("Accept", "application/vnd.github+json").build()
             http.newCall(req).execute().use { r ->
-                if (!r.isSuccessful) null else JSONObject(r.body?.string().orEmpty()).optString("tag_name").removePrefix("v").ifEmpty { null }
+                if (!r.isSuccessful) null else {
+                    val j = JSONObject(r.body?.string().orEmpty())
+                    val body = j.optString("body")
+                    val build = Regex("build:\\s*(\\d+)").find(body)?.groupValues?.get(1)?.toIntOrNull()
+                    val ver = Regex("version:\\s*([0-9][0-9.]*)").find(body)?.groupValues?.get(1) ?: j.optString("tag_name").removePrefix("v")
+                    if (ver.isEmpty()) null else Rel(ver, build, ch)
+                }
             }
         } catch (e: Exception) { null }
     }
+
+    /** Если у релиза есть номер сборки, сравниваем по нему (он только растёт); иначе по номеру версии. */
+    fun isNewerRel(r: Rel, localName: String, localCode: Int): Boolean = if (r.build != null) r.build > localCode else isNewer(r.version, localName)
 
     fun isNewer(remote: String, local: String): Boolean {
         val a = remote.split(".").map { it.toIntOrNull() ?: 0 }; val b = local.split(".").map { it.toIntOrNull() ?: 0 }

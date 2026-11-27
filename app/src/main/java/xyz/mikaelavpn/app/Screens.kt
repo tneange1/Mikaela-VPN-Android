@@ -284,6 +284,20 @@ fun AdvPage(vm: AppVm) {
         SwitchRow("Запуск при включении телефона", "Подключаться после перезагрузки (если выдано разрешение VPN)", vm.boot) { vm.changeBoot(it) }
         Spacer(Modifier.height(14.dp))
         Panel {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("Канал обновлений")
+                Pick(vm.channel, listOf("stable" to "Stable", "ptb" to "PTB", "dev" to "Dev")) { vm.changeChannel(it) }
+            }
+            Spacer(Modifier.height(4.dp))
+            Muted(when (vm.channel) {
+                "ptb" -> "PTB: предрелизные сборки, уже почти готовые. Обновления приходят раньше обычных."
+                "dev" -> "Dev: экспериментальные сборки с новыми функциями, могут работать нестабильно."
+                else -> "Stable: проверенные релизы. Рекомендуется."
+            }, 12)
+            Muted("Переход на более стабильный канал сработает с его следующим релизом: Android не позволяет ставить версию с меньшим номером сборки поверх новой.", 12)
+        }
+        Spacer(Modifier.height(14.dp))
+        Panel {
             Text("Диагностика")
             Spacer(Modifier.height(4.dp))
             Muted("Если что-то не работает, нажмите и отправьте скопированный текст в поддержку.", 12)

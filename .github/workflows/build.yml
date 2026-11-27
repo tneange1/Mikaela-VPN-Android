@@ -1,7 +1,7 @@
 name: build-android
 on:
   push:
-    branches: [main, singbox]
+    branches: [main, ptb, dev]
     tags: ['v*']
   workflow_dispatch:
 permissions:
@@ -101,16 +101,21 @@ jobs:
           path: Mikaela-VPN.apk
 
       - name: Publish release (тег v* или новая версия из version.txt)
-        if: startsWith(github.ref, 'refs/tags/v') || steps.ver.outputs.new == 'true'
+        if: startsWith(github.ref, 'refs/tags/v') || (github.ref == 'refs/heads/main' && steps.ver.outputs.new == 'true')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.ver.outputs.version }}
+          body: |
+            version: ${{ steps.ver.outputs.version }}
+            build: ${{ github.run_number }}
           files: Mikaela-VPN.apk
 
-      - name: Тестовый релиз (сборка без новой версии, не попадает в «последний»)
-        if: github.ref == 'refs/heads/singbox' || (github.ref == 'refs/heads/main' && steps.ver.outputs.new != 'true')
+      - name: Канал PTB/Dev (постоянный пререлиз, не попадает в «последний»)
+        if: github.ref == 'refs/heads/ptb' || github.ref == 'refs/heads/dev'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release delete test-singbox --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
-          gh release create test-singbox Mikaela-VPN.apk --prerelease --target "$GITHUB_SHA" --title "Тестовая сборка (sing-box)" --notes "Тест перехода на sing-box. Не для всех: основной релиз остаётся прежним." --repo "$GITHUB_REPOSITORY"
+          CH="${GITHUB_REF_NAME}"
+          gh release delete "$CH" --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
+          gh release create "$CH" Mikaela-VPN.apk --prerelease --target "$GITHUB_SHA" --title "Канал $CH" --notes "version: ${{ steps.ver.outputs.version }}
+          build: ${{ github.run_number }}" --repo "$GITHUB_REPOSITORY"
