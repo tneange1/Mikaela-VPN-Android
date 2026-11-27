@@ -55,6 +55,13 @@ class VpnSvc : VpnService(), PlatformInterface, CommandServerHandler {
         private var setupDone = false
         private val xrayLog = StringBuilder()
 
+        /** Текст для диагностики: версия, проверки и последние строки журналов sing-box и Xray (без ключей серверов). */
+        fun report(ctx: Context): String {
+            fun tail(n: String, k: Int) = try { File(ctx.filesDir, n).readLines().takeLast(k).joinToString("\n") } catch (_: Exception) { "(нет)" }
+            return "Mikaela VPN ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}), Android ${Build.VERSION.SDK_INT}, ${Build.SUPPORTED_ABIS.firstOrNull()}\n" +
+                "Ошибка: ${lastError ?: "-"}\n\n--- проверки ---\n${tail("diag.log", 30)}\n\n--- sing-box ---\n${tail("sb.log", 120)}\n\n--- xray ---\n${tail("xray.log", 60)}"
+        }
+
         fun assetDir(ctx: Context): String {
             val d = File(ctx.filesDir, "xray-assets").apply { mkdirs() }
             val mark = File(d, "version"); val ver = BuildConfig.VERSION_CODE.toString()
@@ -104,7 +111,13 @@ class VpnSvc : VpnService(), PlatformInterface, CommandServerHandler {
         pb.environment()["XRAY_LOCATION_ASSET"] = assets
         val p = pb.start()
         Thread {
-            try { p.inputStream.bufferedReader().forEachLine { l -> synchronized(xrayLog) { xrayLog.append(l).append('\n'); if (xrayLog.length > 4000) xrayLog.delete(0, xrayLog.length - 3000) } } } catch (_: Exception) {}
+            try {
+                val lf = File(filesDir, "xray.log")
+                p.inputStream.bufferedReader().forEachLine { l ->
+                    synchronized(xrayLog) { xrayLog.append(l).append('\n'); if (xrayLog.length > 4000) xrayLog.delete(0, xrayLog.length - 3000) }
+                    try { if (lf.length() < 200_000) lf.appendText(l + "\n") } catch (_: Exception) {}
+                }
+            } catch (_: Exception) {}
         }.start()
         return p
     }
@@ -131,6 +144,7 @@ class VpnSvc : VpnService(), PlatformInterface, CommandServerHandler {
             val j = JSONObject(File(filesDir, "session.json").readText())
             val assets = assetDir(this)
             synchronized(xrayLog) { xrayLog.setLength(0) }
+            for (n in listOf("xray.log", "sb.log", "diag.log")) try { File(filesDir, n).delete() } catch (_: Exception) {}
             val xs = j.getJSONArray("xray")
             val started = ArrayList<Pair<java.lang.Process, Int>>()
             for (i in 0 until xs.length()) {
@@ -162,12 +176,38 @@ class VpnSvc : VpnService(), PlatformInterface, CommandServerHandler {
             val srv = CommandServer(this, this)
             srv.start()
             cs = srv
-            srv.startOrReloadService(j.getJSONObject("sb").toString(), OverrideOptions())
+            val sbCfg = j.getJSONObject("sb")
+            sbCfg.getJSONObject("log").put("level", "info").put("output", File(filesDir, "sb.log").path)
+            srv.startOrReloadService(sbCfg.toString(), OverrideOptions())
             running = true; state.value = true
+            Thread { selfTest() }.start()
         } catch (e: Throwable) {
             lastError = e.message ?: e.toString()
             cleanup(); state.value = false; stopSelf()
         }
+    }
+
+    private fun diag(m: String) { try { File(filesDir, "diag.log").appendText(m + "\n") } catch (_: Exception) {} }
+
+    /** Проверка канала через Xray (SOCKS на localhost) — отделяет проблему сервера от проблемы туннеля. */
+    private fun selfTest() {
+        try {
+            Thread.sleep(1500)
+            val t0 = System.currentTimeMillis()
+            Socket().use { s ->
+                s.soTimeout = 8000
+                s.connect(InetSocketAddress("127.0.0.1", Api.XRAY_PORT), 3000)
+                val o = s.getOutputStream(); val i = s.getInputStream()
+                o.write(byteArrayOf(5, 1, 0)); o.flush()
+                val r1 = ByteArray(2); i.read(r1)
+                o.write(byteArrayOf(5, 1, 0, 1, 1, 1, 1, 1, 0, 80)); o.flush()
+                val r2 = ByteArray(10); val n = i.read(r2)
+                if (n < 2 || r2[1].toInt() != 0) { diag("xray socks: сервер не принял соединение (код ${if (n > 1) r2[1].toInt() else n})"); return }
+                o.write("GET / HTTP/1.1\r\nHost: 1.1.1.1\r\nConnection: close\r\n\r\n".toByteArray()); o.flush()
+                val b = ByteArray(64); val k = i.read(b)
+                diag("xray socks: ответ «${String(b, 0, maxOf(k, 0)).lineSequence().firstOrNull()}» за ${System.currentTimeMillis() - t0} мс")
+            }
+        } catch (e: Exception) { diag("xray socks: ошибка ${e.message}") }
     }
 
     private fun cleanup() {

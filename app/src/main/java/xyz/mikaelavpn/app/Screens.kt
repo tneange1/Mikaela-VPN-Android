@@ -284,6 +284,17 @@ fun AdvPage(vm: AppVm) {
         SwitchRow("Запуск при включении телефона", "Подключаться после перезагрузки (если выдано разрешение VPN)", vm.boot) { vm.changeBoot(it) }
         Spacer(Modifier.height(14.dp))
         Panel {
+            Text("Диагностика")
+            Spacer(Modifier.height(4.dp))
+            Muted("Если что-то не работает, нажмите и отправьте скопированный текст в поддержку.", 12)
+            TextButton({
+                val cb = ctx.getSystemService(android.content.ClipboardManager::class.java)
+                cb.setPrimaryClip(android.content.ClipData.newPlainText("Mikaela VPN", VpnSvc.report(ctx)))
+                vm.say("Журнал скопирован")
+            }, contentPadding = PaddingValues(0.dp)) { Text("Скопировать журнал") }
+        }
+        Spacer(Modifier.height(14.dp))
+        Panel {
             Text("Блокировка интернета без VPN")
             Spacer(Modifier.height(4.dp))
             Muted("В системных настройках VPN включите «Постоянный VPN» и «Блокировать подключения без VPN» для Mikaela VPN.")
