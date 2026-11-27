@@ -7,6 +7,7 @@ import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -30,6 +31,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.core.graphics.drawable.toBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -332,7 +335,15 @@ fun AppsPage(vm: AppVm) {
                     Row(Modifier.fillMaxWidth().clickable {
                         vm.changeRouting(r.copy(apps = if (on) r.apps - a.pkg else r.apps + a.pkg))
                     }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) { Text(a.label); Muted(a.pkg) }
+                        val ico by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, a.pkg) {
+                            value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                try { ctx.packageManager.getApplicationIcon(a.pkg).toBitmap(96, 96).asImageBitmap() } catch (_: Throwable) { null }
+                            }
+                        }
+                        val ib = ico
+                        if (ib != null) Image(ib, null, Modifier.size(40.dp).clip(RoundedCornerShape(10.dp))) else Spacer(Modifier.size(40.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) { Text(a.label, maxLines = 1); Muted(a.pkg) }
                         Checkbox(on, { vm.changeRouting(r.copy(apps = if (on) r.apps - a.pkg else r.apps + a.pkg)) })
                     }
                 }
@@ -345,12 +356,12 @@ fun AppsPage(vm: AppVm) {
 fun DomainsPage(vm: AppVm) {
     var t by remember { mutableStateOf("") }
     var edit by remember { mutableStateOf<DomRule?>(null) }
+    var pending by remember { mutableStateOf<List<String>?>(null) }
     val r = vm.routing
     fun add() {
-        val have = r.rules.map { it.value }.toMutableSet(); val add = ArrayList<DomRule>()
-        for (p in t.split(Regex("[\\s,;]+")).filter { it.isNotBlank() }) { val d = Api.normDomain(p); if (d.isNotEmpty() && have.add(d)) add.add(DomRule(d)) }
-        if (add.isNotEmpty()) vm.changeRouting(r.copy(rules = r.rules + add)) else vm.say("Неверный домен или он уже есть в списке")
-        t = ""
+        val have = r.rules.map { it.value }.toMutableSet(); val add = ArrayList<String>()
+        for (p in t.split(Regex("[\\s,;]+")).filter { it.isNotBlank() }) { val d = Api.normDomain(p); if (d.isNotEmpty() && have.add(d)) add.add(d) }
+        if (add.isNotEmpty()) pending = add else vm.say("Неверный домен или он уже есть в списке")
     }
     Column(Modifier.fillMaxSize()) {
         SubHead("Домены") { vm.settingsPage = "routing" }
@@ -359,7 +370,7 @@ fun DomainsPage(vm: AppVm) {
             Spacer(Modifier.width(8.dp))
             Button({ add() }, enabled = t.isNotBlank()) { Text("Добавить") }
         }
-        Muted("Домен example.com включает поддомены. Доменная зона начинается с точки: .ru, .su, .рф. Можно сразу несколько через пробел или запятую. Новое правило идёт напрямую, кнопка настройки справа меняет это.", 12)
+        Muted("Домен example.com включает поддомены. Доменная зона начинается с точки: .ru, .su, .рф. Можно сразу несколько через пробел или запятую. После ввода приложение спросит, куда направлять трафик: напрямую или на серверы.", 12)
         LazyColumn {
             items(r.rules, key = { it.value }) { d ->
                 Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -374,11 +385,17 @@ fun DomainsPage(vm: AppVm) {
             }
         }
     }
+    pending?.let { ds ->
+        RuleDialog(vm, DomRule(ds.joinToString(", ")), { pending = null }, "Добавить") { n ->
+            vm.changeRouting(vm.routing.copy(rules = vm.routing.rules + ds.map { DomRule(it, n.action, n.servers) }))
+            pending = null; t = ""
+        }
+    }
     edit?.let { d -> RuleDialog(vm, d, { edit = null }) { n -> vm.changeRouting(vm.routing.copy(rules = vm.routing.rules.map { if (it.value == d.value) n else it })); edit = null } }
 }
 
 @Composable
-fun RuleDialog(vm: AppVm, d: DomRule, onClose: () -> Unit, onSave: (DomRule) -> Unit) {
+fun RuleDialog(vm: AppVm, d: DomRule, onClose: () -> Unit, saveText: String = "Сохранить", onSave: (DomRule) -> Unit) {
     var act by remember { mutableStateOf(d.action) }
     var sel by remember { mutableStateOf(d.servers.toSet()) }
     var q by remember { mutableStateOf("") }
@@ -409,7 +426,7 @@ fun RuleDialog(vm: AppVm, d: DomRule, onClose: () -> Unit, onSave: (DomRule) -> 
             }
         },
         confirmButton = {
-            Button({ if (act == "server" && sel.isEmpty()) vm.say("Выберите хотя бы один сервер") else onSave(DomRule(d.value, act, if (act == "server") vm.servers.map { it.tag }.filter { it in sel } else emptyList())) }) { Text("Сохранить") }
+            Button({ if (act == "server" && sel.isEmpty()) vm.say("Выберите хотя бы один сервер") else onSave(DomRule(d.value, act, if (act == "server") vm.servers.map { it.tag }.filter { it in sel } else emptyList())) }) { Text(saveText) }
         },
         dismissButton = { OutlinedButton(onClose) { Text("Отмена") } },
     )
