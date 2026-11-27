@@ -107,8 +107,8 @@ jobs:
           tag_name: v${{ steps.ver.outputs.version }}
           files: Mikaela-VPN.apk
 
-      - name: Тестовый релиз (ветка singbox, не попадает в «последний»)
-        if: github.ref == 'refs/heads/singbox'
+      - name: Тестовый релиз (сборка без новой версии, не попадает в «последний»)
+        if: github.ref == 'refs/heads/singbox' || (github.ref == 'refs/heads/main' && steps.ver.outputs.new != 'true')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
