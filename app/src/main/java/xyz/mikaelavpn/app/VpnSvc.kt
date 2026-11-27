@@ -16,8 +16,6 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.Process
 import androidx.core.app.ServiceCompat
-import io.nekohasekai.libbox.AutoRedirectHandler
-import io.nekohasekai.libbox.AutoRedirectSession
 import io.nekohasekai.libbox.BridgeOptions
 import io.nekohasekai.libbox.BridgeSession
 import io.nekohasekai.libbox.CommandServer
@@ -74,7 +72,7 @@ class VpnSvc : VpnService(), PlatformInterface, CommandServerHandler {
     private var running = false
     private var cs: CommandServer? = null
     private var tun: ParcelFileDescriptor? = null
-    private val procs = ArrayList<Process>()
+    private val procs = ArrayList<java.lang.Process>()
     private var netCb: ConnectivityManager.NetworkCallback? = null
     @Volatile private var ifListener: InterfaceUpdateListener? = null
     @Volatile private var defNet: Network? = null
@@ -98,7 +96,7 @@ class VpnSvc : VpnService(), PlatformInterface, CommandServerHandler {
     }
 
     // ---------- Xray как отдельный процесс ----------
-    private fun startXray(port: Int, cfg: String, assets: String): Process {
+    private fun startXray(port: Int, cfg: String, assets: String): java.lang.Process {
         val f = File(filesDir, "xray-$port.json"); f.writeText(cfg)
         val bin = File(applicationInfo.nativeLibraryDir, "libxray.so")
         if (!bin.exists()) throw Exception("Не найден модуль Xray (libxray.so). Эта сборка не поддерживает ваш процессор")
@@ -113,7 +111,7 @@ class VpnSvc : VpnService(), PlatformInterface, CommandServerHandler {
 
     private fun portOpen(port: Int, ms: Int = 300) = try { Socket().use { it.connect(InetSocketAddress("127.0.0.1", port), ms) }; true } catch (_: Exception) { false }
 
-    private fun waitPort(p: Process, port: Int, totalMs: Int): Boolean {
+    private fun waitPort(p: java.lang.Process, port: Int, totalMs: Int): Boolean {
         val end = System.currentTimeMillis() + totalMs
         while (System.currentTimeMillis() < end) {
             if (!p.isAlive) return false
@@ -134,7 +132,7 @@ class VpnSvc : VpnService(), PlatformInterface, CommandServerHandler {
             val assets = assetDir(this)
             synchronized(xrayLog) { xrayLog.setLength(0) }
             val xs = j.getJSONArray("xray")
-            val started = ArrayList<Pair<Process, Int>>()
+            val started = ArrayList<Pair<java.lang.Process, Int>>()
             for (i in 0 until xs.length()) {
                 val o = xs.getJSONObject(i)
                 val port = o.getInt("port")
@@ -262,7 +260,6 @@ class VpnSvc : VpnService(), PlatformInterface, CommandServerHandler {
                 it.name = lp.interfaceName
                 it.index = ni.index
                 it.dnsServer = Strs(lp.dnsServers.mapNotNull { d -> d.hostAddress })
-                it.dnsSearchDomain = Strs(emptyList())
                 it.gateway = Strs(lp.routes.filter { r -> r.destination.prefixLength == 0 }.mapNotNull { r -> r.gateway }.filterNot { g -> g.isAnyLocalAddress }.mapNotNull { g -> g.hostAddress })
                 it.type = when {
                     caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> Libbox.InterfaceTypeWIFI
@@ -306,8 +303,6 @@ class VpnSvc : VpnService(), PlatformInterface, CommandServerHandler {
     override fun tailscaleHostname(): String = ""
     override fun usePlatformBridge(): Boolean = false
     override fun createBridge(options: BridgeOptions?): BridgeSession { throw Exception("not supported") }
-    override fun usePlatformAutoRedirect(): Boolean = false
-    override fun createAutoRedirect(options: ByteArray?, handler: AutoRedirectHandler?): AutoRedirectSession { throw Exception("not supported") }
 
     // ---------- CommandServerHandler ----------
     override fun serviceStop() { Thread { stopVpn() }.start() }
