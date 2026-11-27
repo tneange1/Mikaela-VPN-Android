@@ -555,7 +555,7 @@ object Api {
             .put("inbounds", JSONArray().put(JSONObject().put("type", "tun").put("tag", "tun-in").put("address", JSONArray(listOf("172.19.0.1/30", "fdfe:dcba:9876::1/126")))
                 .put("auto_route", true).put("stack", "mixed").put("mtu", 1500)))
             .put("outbounds", outs)
-            .put("route", JSONObject().put("rules", rules).put("final", "xray").put("auto_detect_interface", true).put("find_process", true))
+            .put("route", JSONObject().put("rules", rules).put("final", "xray").put("auto_detect_interface", false).put("find_process", true))
         return JSONObject().put("xray", xray).put("sb", sb).toString()
     }
 
