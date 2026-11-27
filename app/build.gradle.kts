@@ -14,7 +14,7 @@ android {
         targetSdk = 34
         versionCode = (findProperty("versionCode") as String?)?.toInt() ?: 1
         versionName = (findProperty("versionName") as String?) ?: "1.1.0"
-        ndk { abiFilters += listOf("arm64-v8a") }
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
     signingConfigs {
@@ -50,7 +50,7 @@ android {
 }
 
 dependencies {
-    implementation(files("libs/libbox.aar"))
+    implementation(files("libs/xraycore.aar"))
     implementation(platform("androidx.compose:compose-bom:2024.09.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")

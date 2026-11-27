@@ -26,7 +26,7 @@ object Updater {
     suspend fun download(ctx: Context, onPercent: (Int) -> Unit): File = withContext(Dispatchers.IO) {
         val dir = File(ctx.cacheDir, "updates").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
         val tmp = File(dir, "update.part"); val out = File(dir, "update.apk")
-        http.newCall(Request.Builder().url(Api.APK_URL).build()).execute().use { r ->
+        http.newCall(Request.Builder().url(Api.apkUrl(Api.store.channel)).build()).execute().use { r ->
             if (!r.isSuccessful) throw Exception("HTTP ${r.code}")
             val body = r.body ?: throw Exception("пустой ответ")
             val total = body.contentLength(); var done = 0L; var last = -1

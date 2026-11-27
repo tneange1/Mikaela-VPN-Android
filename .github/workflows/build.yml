@@ -1,7 +1,7 @@
 name: build-android
 on:
   push:
-    branches: [main, singbox]
+    branches: [main, ptb, dev]
     tags: ['v*']
   workflow_dispatch:
 permissions:
@@ -28,33 +28,20 @@ jobs:
           echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
 
-      - name: Build libbox (sing-box, gomobile -> AAR)
+      - name: Build Xray core (gomobile -> AAR)
+        working-directory: core
         run: |
           set -ex
-          SBV=v1.14.5
-          git clone --depth 1 --branch "$SBV" https://github.com/SagerNet/sing-box "$RUNNER_TEMP/sb"
-          cd "$RUNNER_TEMP/sb"
           go version
-          go install -v github.com/sagernet/gomobile/cmd/gomobile@v0.1.12
-          go install -v github.com/sagernet/gomobile/cmd/gobind@v0.1.12
+          go get github.com/xtls/xray-core@latest golang.org/x/mobile@latest
+          go mod tidy
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
           export PATH="$PATH:$(go env GOPATH)/bin"
           gomobile init
-          TAGS="with_gvisor,with_quic,with_wireguard,with_utls,with_clash_api,with_usbip,with_openvpn,with_openconnect,badlinkname,tfogo_checklinkname0,with_tailscale,ts_omit_logtail,ts_omit_ssh,ts_omit_drive,ts_omit_taildrop,ts_omit_webclient,ts_omit_doctor,ts_omit_capture,ts_omit_kube,ts_omit_aws,ts_omit_synology,ts_omit_bird,with_low_memory"
-          LDF="-X github.com/sagernet/sing-box/constant.Version=${SBV#v} -X runtime.godebugDefault=multipathtcp=0,tlssha1=1 -checklinkname=0 -s -w -buildid="
-          mkdir -p "$GITHUB_WORKSPACE/app/libs"
-          gomobile bind -v -o "$GITHUB_WORKSPACE/app/libs/libbox.aar" -target android/arm64 -androidapi 24 -javapkg=io.nekohasekai -libname=box -trimpath -buildvcs=false -ldflags "$LDF" -tags "$TAGS" ./experimental/libbox
-          ls -la "$GITHUB_WORKSPACE/app/libs"
-
-      - name: Xray binary (arm64, запускается как отдельный процесс)
-        run: |
-          set -ex
-          mkdir -p "$RUNNER_TEMP/xr" app/src/main/jniLibs/arm64-v8a
-          curl -fsSL -o "$RUNNER_TEMP/xr/x.zip" https://github.com/XTLS/Xray-core/releases/latest/download/Xray-android-arm64-v8a.zip
-          unzip -o "$RUNNER_TEMP/xr/x.zip" xray -d "$RUNNER_TEMP/xr"
-          cp "$RUNNER_TEMP/xr/xray" app/src/main/jniLibs/arm64-v8a/libxray.so
-          chmod 755 app/src/main/jniLibs/arm64-v8a/libxray.so
-          file app/src/main/jniLibs/arm64-v8a/libxray.so || true
-          ls -la app/src/main/jniLibs/arm64-v8a
+          mkdir -p ../app/libs
+          gomobile bind -v -target=android/arm64,android/arm -androidapi 26 -ldflags="-s -w" -o ../app/libs/xraycore.aar .
+          ls -la ../app/libs
 
       - name: Geo data
         run: |
@@ -101,16 +88,21 @@ jobs:
           path: Mikaela-VPN.apk
 
       - name: Publish release (тег v* или новая версия из version.txt)
-        if: startsWith(github.ref, 'refs/tags/v') || steps.ver.outputs.new == 'true'
+        if: startsWith(github.ref, 'refs/tags/v') || (github.ref == 'refs/heads/main' && steps.ver.outputs.new == 'true')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.ver.outputs.version }}
+          body: |
+            version: ${{ steps.ver.outputs.version }}
+            build: ${{ github.run_number }}
           files: Mikaela-VPN.apk
 
-      - name: Тестовый релиз (сборка без новой версии, не попадает в «последний»)
-        if: github.ref == 'refs/heads/singbox' || (github.ref == 'refs/heads/main' && steps.ver.outputs.new != 'true')
+      - name: Канал PTB/Dev (постоянный пререлиз, не попадает в «последний»)
+        if: github.ref == 'refs/heads/ptb' || github.ref == 'refs/heads/dev'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release delete test-singbox --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
-          gh release create test-singbox Mikaela-VPN.apk --prerelease --target "$GITHUB_SHA" --title "Тестовая сборка (sing-box)" --notes "Тест перехода на sing-box. Не для всех: основной релиз остаётся прежним." --repo "$GITHUB_REPOSITORY"
+          CH="${GITHUB_REF_NAME}"
+          gh release delete "$CH" --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
+          gh release create "$CH" Mikaela-VPN.apk --prerelease --target "$GITHUB_SHA" --title "Канал $CH" --notes "version: ${{ steps.ver.outputs.version }}
+          build: ${{ github.run_number }}" --repo "$GITHUB_REPOSITORY"
