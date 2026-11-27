@@ -299,7 +299,7 @@ fun RoutingPage(vm: AppVm) {
     val r = vm.routing
     Column(Modifier.fillMaxSize()) {
         SubHead("Маршрутизация") { vm.settingsPage = "main" }
-        Muted("Домены можно пустить напрямую, минуя VPN, или всегда через выбранные серверы. Если такой сервер не отвечает, соединение блокируется. Приложения идут напрямую: Android не позволяет отправлять разные приложения на разные серверы.", 13)
+        Muted("Домены можно пустить напрямую, минуя VPN, или всегда через выбранные серверы. Если такой сервер не отвечает, соединение блокируется. Для приложений тоже можно выбрать: мимо VPN или через выбранные серверы (нужен Android 10 и новее).", 13)
         Spacer(Modifier.height(10.dp))
         NavRow("Маршрутизация приложений", if (r.apps.isEmpty()) "" else r.apps.size.toString()) { vm.settingsPage = "apps" }
         NavRow("Маршрутизация доменов", if (r.rules.isEmpty()) "" else r.rules.size.toString()) { vm.settingsPage = "domains" }
@@ -321,20 +321,22 @@ fun AppsPage(vm: AppVm) {
         }
     }
     val r = vm.routing
+    var edit by remember { mutableStateOf<AppInfo?>(null) }
+    fun status(pkg: String): String? = r.apps.firstOrNull { it.value == pkg }?.let { d ->
+        if (d.action == "server") "→ " + d.servers.joinToString(", ") { tg -> vm.servers.firstOrNull { it.tag == tg }?.label ?: "$tg (нет в списке)" } else "Напрямую (мимо VPN)"
+    }
     Column(Modifier.fillMaxSize()) {
         SubHead("Приложения") { vm.settingsPage = "routing" }
         OutlinedTextField(q, { q = it }, Modifier.fillMaxWidth(), singleLine = true, placeholder = { Text("Поиск") }, shape = RoundedCornerShape(12.dp))
         Spacer(Modifier.height(8.dp))
         val list = all
         if (list == null) CircularProgressIndicator(Modifier.padding(20.dp)) else if (list.isEmpty()) Text("Не удалось получить список приложений. Разрешите приложению доступ к списку приложений в настройках телефона.", color = Bad, fontSize = 13.sp) else {
+            val set = r.apps.map { it.value }.toSet()
             val f = list.filter { q.isBlank() || it.label.contains(q, true) || it.pkg.contains(q, true) }
-                .sortedByDescending { it.pkg in r.apps }
+                .sortedByDescending { it.pkg in set }
             LazyColumn {
                 items(f, key = { it.pkg }) { a ->
-                    val on = a.pkg in r.apps
-                    Row(Modifier.fillMaxWidth().clickable {
-                        vm.changeRouting(r.copy(apps = if (on) r.apps - a.pkg else r.apps + a.pkg))
-                    }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.fillMaxWidth().clickable { edit = a }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         val ico by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, a.pkg) {
                             value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                                 try { ctx.packageManager.getApplicationIcon(a.pkg).toBitmap(96, 96).asImageBitmap() } catch (_: Throwable) { null }
@@ -343,11 +345,22 @@ fun AppsPage(vm: AppVm) {
                         val ib = ico
                         if (ib != null) Image(ib, null, Modifier.size(40.dp).clip(RoundedCornerShape(10.dp))) else Spacer(Modifier.size(40.dp))
                         Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) { Text(a.label, maxLines = 1); Muted(a.pkg) }
-                        Checkbox(on, { vm.changeRouting(r.copy(apps = if (on) r.apps - a.pkg else r.apps + a.pkg)) })
+                        Column(Modifier.weight(1f)) {
+                            Text(a.label, maxLines = 1)
+                            val st = status(a.pkg)
+                            if (st != null) Muted(st, 12) else Muted(a.pkg, 12)
+                        }
                     }
                 }
             }
+        }
+    }
+    edit?.let { a ->
+        val cur = r.apps.firstOrNull { it.value == a.pkg }
+        RuleDialog(vm, cur ?: DomRule(a.pkg), { edit = null }, if (cur == null) "Добавить" else "Сохранить", a.label,
+            if (cur == null) null else ({ vm.changeRouting(vm.routing.copy(apps = vm.routing.apps.filter { it.value != a.pkg })); edit = null })) { n ->
+            val rest = vm.routing.apps.filter { it.value != a.pkg }
+            vm.changeRouting(vm.routing.copy(apps = rest + n)); edit = null
         }
     }
 }
@@ -395,13 +408,13 @@ fun DomainsPage(vm: AppVm) {
 }
 
 @Composable
-fun RuleDialog(vm: AppVm, d: DomRule, onClose: () -> Unit, saveText: String = "Сохранить", onSave: (DomRule) -> Unit) {
+fun RuleDialog(vm: AppVm, d: DomRule, onClose: () -> Unit, saveText: String = "Сохранить", title: String = d.value, onRemove: (() -> Unit)? = null, onSave: (DomRule) -> Unit) {
     var act by remember { mutableStateOf(d.action) }
     var sel by remember { mutableStateOf(d.servers.toSet()) }
     var q by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onClose,
-        title = { Text(d.value) },
+        title = { Text(title) },
         text = {
             Column {
                 Muted("Куда направлять трафик", 13)
@@ -409,6 +422,7 @@ fun RuleDialog(vm: AppVm, d: DomRule, onClose: () -> Unit, saveText: String = "�
                     Chip("Напрямую", act == "direct", Modifier.weight(1f)) { act = "direct" }
                     Chip("На серверы", act == "server", Modifier.weight(1f)) { act = "server" }
                 }
+                if (onRemove != null) TextButton(onRemove) { Text("Убрать из списка", color = Bad) }
                 if (act == "direct") { Spacer(Modifier.height(8.dp)); Muted("Обход туннеля: трафик идёт мимо VPN.", 12) }
                 else {
                     Spacer(Modifier.height(8.dp)); Muted("Выберите один или несколько серверов. Если выбрано несколько, трафик распределяется между ними.", 12)

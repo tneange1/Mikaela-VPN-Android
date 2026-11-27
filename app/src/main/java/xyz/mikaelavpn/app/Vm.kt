@@ -240,7 +240,7 @@ class AppVm(app: Application) : AndroidViewModel(app) {
     // ---------- VPN ----------
     fun writeConfig(ctx: Context): Boolean {
         val s = current ?: return false
-        File(ctx.filesDir, "xray.json").writeText(Api.buildXrayConfig(s, routing, servers))
+        File(ctx.filesDir, "session.json").writeText(Api.buildSession(s, routing, servers))
         return true
     }
 
