@@ -26,7 +26,7 @@ class BootReceiver : BroadcastReceiver() {
             if (Api.store.access == null) return
             if (VpnService.prepare(ctx) != null) return
             val srv = Api.cachedServers().let { l -> l.firstOrNull { it.tag == Api.store.server } ?: l.firstOrNull() } ?: return
-            File(ctx.filesDir, "xray.json").writeText(Api.buildXrayConfig(srv, Api.routing(), Api.cachedServers()))
+            File(ctx.filesDir, "session.json").writeText(Api.buildSession(srv, Api.routing(), Api.cachedServers()))
             ContextCompat.startForegroundService(ctx, Intent(ctx, VpnSvc::class.java).setAction(VpnSvc.A_START))
         } catch (_: Throwable) {}
     }

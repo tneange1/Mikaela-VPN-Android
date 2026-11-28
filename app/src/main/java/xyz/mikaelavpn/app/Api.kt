@@ -57,7 +57,8 @@ data class AuthOpts(val email: Boolean = true, val reg: Boolean = true, val tele
 data class TgSession(val token: String, val bot: String, val expires: Int)
 /** value: «example.com» (домен с поддоменами) или «.ru» (доменная зона). action: direct (мимо VPN) или server (на выбранные серверы). */
 data class DomRule(val value: String, val action: String = "direct", val servers: List<String> = emptyList())
-data class Routing(val apps: List<String> = emptyList(), val rules: List<DomRule> = emptyList())
+/** apps: value = имя пакета; rules: value = домен/зона. action: direct | server. */
+data class Routing(val apps: List<DomRule> = emptyList(), val rules: List<DomRule> = emptyList())
 
 private fun JSONObject.num(vararg k: String): Double? {
     for (x in k) if (has(x) && !isNull(x)) {
@@ -439,11 +440,20 @@ object Api {
                 for (i in 0 until pa.length()) pa.optJSONObject(i)?.let { o -> rules.add(DomRule(o.optString("d"), "server", listOf(o.optString("s")))) }
             } catch (_: Exception) {}
         }
-        Routing(list("apps"), rules.filter { it.value.isNotEmpty() })
+        val apps = ArrayList<DomRule>()
+        val aa = j.optJSONArray("arules")
+        if (aa != null) {
+            for (i in 0 until aa.length()) aa.optJSONObject(i)?.let { o ->
+                val sv = o.optJSONArray("s")?.let { a -> (0 until a.length()).map { a.optString(it) } } ?: emptyList()
+                apps.add(DomRule(o.optString("v"), if (o.optString("a") == "server" && sv.isNotEmpty()) "server" else "direct", sv))
+            }
+        } else list("apps").forEach { apps.add(DomRule(it)) }   // миграция: раньше приложения были только «мимо VPN»
+        Routing(apps.filter { it.value.isNotEmpty() }, rules.filter { it.value.isNotEmpty() })
     } catch (e: Exception) { Routing() }
 
     fun saveRouting(r: Routing) {
-        store.routing = JSONObject().put("apps", JSONArray(r.apps))
+        store.routing = JSONObject()
+            .put("arules", JSONArray(r.apps.map { JSONObject().put("v", it.value).put("a", it.action).put("s", JSONArray(it.servers)) }))
             .put("rules", JSONArray(r.rules.map { JSONObject().put("v", it.value).put("a", it.action).put("s", JSONArray(it.servers)) })).toString()
         store.pre = null
     }
@@ -471,45 +481,20 @@ object Api {
         return prox
     }
 
-    /** Правила «на сервер» ставятся первыми и работают всегда. Если сервер не отвечает, соединение не проходит (запасного пути нет). */
-    private fun applyServerRules(c: JSONObject, rs: List<DomRule>, all: List<Srv>) {
-        val outs = c.optJSONArray("outbounds") ?: JSONArray().also { c.put("outbounds", it) }
-        val routing = c.optJSONObject("routing") ?: JSONObject().also { c.put("routing", it) }
-        val old = routing.optJSONArray("rules") ?: JSONArray()
-        val bals = routing.optJSONArray("balancers") ?: JSONArray().also { routing.put("balancers", it) }
-        val rules = JSONArray()
-        var blockAdded = false
-        var gi = 0
-        for ((_, group) in rs.groupBy { it.servers.joinToString("|") }) {
-            val rule = JSONObject().put("type", "field").put("domain", JSONArray(group.map { xrayDomain(it.value) }))
-            val prefix = "mikpre$gi-"
-            var n = 0
-            for (tag in group[0].servers) {
-                val srv = all.firstOrNull { it.tag == tag } ?: continue
-                for (node in nodesOf(srv.cfg)) outs.put(JSONObject(node.toString()).put("tag", prefix + (n++)))
-            }
-            if (n == 0) {
-                if (!blockAdded) { outs.put(JSONObject().put("protocol", "blackhole").put("tag", "mikpre-block")); blockAdded = true }
-                rule.put("outboundTag", "mikpre-block")
-            } else if (n > 1) {
-                bals.put(JSONObject().put("tag", "mikpreB$gi").put("selector", JSONArray().put(prefix)).put("strategy", JSONObject().put("type", "random")))
-                rule.put("balancerTag", "mikpreB$gi")
-            } else rule.put("outboundTag", prefix + "0")
-            rules.put(rule); gi++
-        }
-        for (k in 0 until old.length()) rules.put(old.get(k))
-        routing.put("rules", rules)
+    const val XRAY_PORT = 10808
+    const val PRE_PORT = 10810
+
+    private fun xrayFor(s: Srv, port: Int): JSONObject {
+        val c = JSONObject(s.cfg.toString())
+        c.remove("meta"); c.remove("remarks"); c.remove("remnawave")
+        c.put("log", JSONObject().put("loglevel", "warning"))
+        c.put("inbounds", JSONArray().put(JSONObject().put("tag", "socks").put("listen", "127.0.0.1").put("port", port).put("protocol", "socks")
+            .put("settings", JSONObject().put("auth", "noauth").put("udp", true).put("ip", "127.0.0.1"))
+            .put("sniffing", JSONObject().put("enabled", true).put("routeOnly", true).put("destOverride", JSONArray(listOf("http", "tls", "quic"))))))
+        return c
     }
 
-    /** Конфиг для Xray: конфиг панели как есть, входящие заменяются на TUN, плюс правила пользователя. */
-    fun buildXrayConfig(s: Srv, rt: Routing, all: List<Srv> = emptyList()): String {
-        val c = JSONObject(s.cfg.toString())
-        c.put("log", JSONObject().put("loglevel", "warning"))
-        val tun = JSONObject().put("tag", "tun-in").put("protocol", "tun")
-            .put("settings", JSONObject().put("name", "xray0").put("mtu", 1500))
-            .put("sniffing", JSONObject().put("enabled", true).put("routeOnly", true)
-                .put("destOverride", JSONArray(listOf("http", "tls", "quic"))))
-        c.put("inbounds", JSONArray().put(tun))
+    private fun socksOut(tag: String, port: Int) = JSONObject().put("type", "socks").put("tag", tag).put("server", "127.0.0.1").put("server_port", port).put("version", "5")
 
     /**
      * Сессия VPN: набор процессов Xray (основной + по одному на каждый сервер из правил «на сервер», все на SOCKS localhost)
