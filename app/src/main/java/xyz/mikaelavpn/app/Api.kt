@@ -511,22 +511,69 @@ object Api {
                 .put("destOverride", JSONArray(listOf("http", "tls", "quic"))))
         c.put("inbounds", JSONArray().put(tun))
 
-        val direct = rt.rules.filter { it.action == "direct" }
-        if (direct.isNotEmpty()) {
-            val outs = c.optJSONArray("outbounds") ?: JSONArray().also { c.put("outbounds", it) }
-            var hasDirect = false
-            for (i in 0 until outs.length()) if (outs.optJSONObject(i)?.optString("tag") == "direct") hasDirect = true
-            if (!hasDirect) outs.put(JSONObject().put("protocol", "freedom").put("tag", "direct"))
-            val routing = c.optJSONObject("routing") ?: JSONObject().also { c.put("routing", it) }
-            val old = routing.optJSONArray("rules") ?: JSONArray()
-            val rules = JSONArray()
-            rules.put(JSONObject().put("type", "field").put("domain", JSONArray(direct.map { xrayDomain(it.value) })).put("outboundTag", "direct"))
-            for (i in 0 until old.length()) rules.put(old.get(i))
-            routing.put("rules", rules)
+    /**
+     * Сессия VPN: набор процессов Xray (основной + по одному на каждый сервер из правил «на сервер», все на SOCKS localhost)
+     * и конфиг sing-box (TUN, правила по приложениям и доменам). Как в Windows-версии.
+     */
+    fun buildSession(s: Srv, rt: Routing, all: List<Srv> = emptyList()): String {
+        val xray = JSONArray().put(JSONObject().put("port", XRAY_PORT).put("cfg", xrayFor(s, XRAY_PORT)))
+        val outs = JSONArray().put(socksOut("xray", XRAY_PORT)).put(JSONObject().put("type", "direct").put("tag", "direct"))
+        val rules = JSONArray()
+        rules.put(JSONObject().put("action", "sniff"))
+        rules.put(JSONObject().put("protocol", "dns").put("action", "hijack-dns"))
+        // QUIC через Xray-UDP не отвечает: отбиваем, браузеры сразу уходят на TCP
+        rules.put(JSONObject().put("protocol", "quic").put("action", "reject"))
+        rules.put(JSONObject().put("ip_is_private", true).put("outbound", "direct"))
+
+        // «на сервер»: у каждого уникального сервера свой Xray; несколько серверов в правиле — группа urltest
+        val ports = LinkedHashMap<String, Int>()
+        class G(val servers: List<String>) { val pk = ArrayList<String>(); val dom = ArrayList<String>() }
+        val groups = LinkedHashMap<String, G>()
+        for (r in rt.apps.filter { it.action == "server" && it.servers.isNotEmpty() }) groups.getOrPut(r.servers.joinToString("|")) { G(r.servers) }.pk.add(r.value)
+        for (r in rt.rules.filter { it.action == "server" && it.servers.isNotEmpty() }) groups.getOrPut(r.servers.joinToString("|")) { G(r.servers) }.dom.add(java.net.IDN.toASCII(r.value.trimStart('.')))
+        var gi = 0
+        for (g in groups.values) {
+            val tags = ArrayList<String>()
+            for (tag in g.servers) {
+                val srv = all.firstOrNull { it.tag == tag } ?: continue
+                val port = ports.getOrPut(tag) {
+                    val p = PRE_PORT + ports.size
+                    xray.put(JSONObject().put("port", p).put("cfg", xrayFor(srv, p)))
+                    outs.put(socksOut("pre-" + (p - PRE_PORT), p)); p
+                }
+                tags.add("pre-" + (port - PRE_PORT))
+            }
+            val rule = JSONObject()
+            if (g.pk.isNotEmpty()) rule.put("package_name", JSONArray(g.pk))
+            if (g.dom.isNotEmpty()) rule.put("domain_suffix", JSONArray(g.dom))
+            if (tags.isEmpty()) rule.put("action", "reject")   // серверов правила нет в подписке: трафик блокируется
+            else if (tags.size == 1) rule.put("outbound", tags[0])
+            else {
+                val gt = "grp-" + gi++
+                outs.put(JSONObject().put("type", "urltest").put("tag", gt).put("outbounds", JSONArray(tags))
+                    .put("url", "https://www.gstatic.com/generate_204").put("interval", "1m").put("tolerance", 50).put("interrupt_exist_connections", false))
+                rule.put("outbound", gt)
+            }
+            // если в правиле и приложения, и домены, sing-box требует совпадения обоих условий: разносим на два правила
+            if (g.pk.isNotEmpty() && g.dom.isNotEmpty()) {
+                val r1 = JSONObject(rule.toString()); r1.remove("domain_suffix")
+                val r2 = JSONObject(rule.toString()); r2.remove("package_name")
+                rules.put(r1); rules.put(r2)
+            } else rules.put(rule)
         }
-        val srvRules = rt.rules.filter { it.action == "server" && it.servers.isNotEmpty() }
-        if (srvRules.isNotEmpty()) applyServerRules(c, srvRules, all)
-        return c.toString()
+        val dp = rt.apps.filter { it.action == "direct" }.map { it.value }
+        if (dp.isNotEmpty()) rules.put(JSONObject().put("package_name", JSONArray(dp)).put("outbound", "direct"))
+        val dd = rt.rules.filter { it.action == "direct" }.map { java.net.IDN.toASCII(it.value.trimStart('.')) }
+        if (dd.isNotEmpty()) rules.put(JSONObject().put("domain_suffix", JSONArray(dd)).put("outbound", "direct"))
+
+        val sb = JSONObject()
+            .put("log", JSONObject().put("level", "warn").put("timestamp", false))
+            .put("dns", JSONObject().put("servers", JSONArray().put(JSONObject().put("type", "tcp").put("tag", "dns-remote").put("server", "1.1.1.1").put("detour", "xray"))).put("final", "dns-remote").put("strategy", "ipv4_only"))
+            .put("inbounds", JSONArray().put(JSONObject().put("type", "tun").put("tag", "tun-in").put("address", JSONArray(listOf("172.19.0.1/30", "fdfe:dcba:9876::1/126")))
+                .put("auto_route", true).put("stack", "gvisor").put("mtu", 1500)))
+            .put("outbounds", outs)
+            .put("route", JSONObject().put("rules", rules).put("final", "xray").put("auto_detect_interface", false).put("find_process", true))
+        return JSONObject().put("xray", xray).put("sb", sb).toString()
     }
 
     // ---------- обновления приложения ----------
