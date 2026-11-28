@@ -1,5 +1,6 @@
 package xyz.mikaelavpn.app
 
+import kotlinx.coroutines.delay
 import android.content.Intent
 import android.net.Uri
 import android.net.VpnService
@@ -79,7 +80,7 @@ fun Home(vm: AppVm) {
                 Spacer(Modifier.height(10.dp))
                 Panel {
                     Text("Правила маршрутизации изменены", fontSize = 13.sp)
-                    TextButton({ vm.reconnect(ctx) }) { Text("Переподключить") }
+                    TextButton({ vm.applyRouting(ctx) }) { Text("Сохранить") }
                 }
             }
             if (vm.error.isNotEmpty()) Text(vm.error, color = Bad, modifier = Modifier.padding(top = 10.dp), fontSize = 13.sp)
@@ -128,13 +129,13 @@ fun Servers(vm: AppVm) {
     val on by VpnSvc.state.collectAsStateWithLifecycle()
     var q by remember { mutableStateOf("") }
     Column(Modifier.fillMaxSize()) {
-        Title("Серверы", "Нажмите — выбрать, свайп вправо — проверить пинг")
+        Title("Серверы", "Нажмите — выбрать. Пинг обновляется автоматически")
         val answered = vm.servers.count { (vm.pings[it.tag] ?: 0) > 0 }; val checked = vm.servers.count { vm.pings[it.tag] != null }
         Muted("Всего серверов: ${vm.servers.size}" + if (checked > 0) " · отвечают: $answered из $checked" else "", 13)
         Spacer(Modifier.height(10.dp))
         OutlinedTextField(q, { q = it }, Modifier.fillMaxWidth(), singleLine = true, placeholder = { Text("Поиск сервера") }, shape = RoundedCornerShape(12.dp))
         Spacer(Modifier.height(10.dp))
-        ActionRow(4, "Тест пинга") { vm.pingAll() }
+        LaunchedEffect(Unit) { while (true) { vm.pingLive(); delay(5000) } }
         if (vm.error.isNotEmpty()) Text(vm.error, color = Bad, fontSize = 13.sp, modifier = Modifier.padding(top = 10.dp))
         Spacer(Modifier.height(10.dp))
         LazyColumn(contentPadding = PaddingValues(bottom = 16.dp)) {
@@ -237,12 +238,26 @@ fun SwitchRow(title: String, sub: String, v: Boolean, onChange: (Boolean) -> Uni
 
 @Composable
 fun SettingsTab(vm: AppVm) {
-    when (vm.settingsPage) {
-        "adv" -> AdvPage(vm)
-        "routing" -> RoutingPage(vm)
-        "apps" -> AppsPage(vm)
-        "domains" -> DomainsPage(vm)
-        else -> SettingsMain(vm)
+    val ctx = LocalContext.current
+    val on by VpnSvc.state.collectAsStateWithLifecycle()
+    Column(Modifier.fillMaxSize()) {
+        Box(Modifier.weight(1f)) {
+            when (vm.settingsPage) {
+                "adv" -> AdvPage(vm)
+                "routing" -> RoutingPage(vm)
+                "apps" -> AppsPage(vm)
+                "domains" -> DomainsPage(vm)
+                else -> SettingsMain(vm)
+            }
+        }
+        // правила настраиваются сколько нужно; «Сохранить» перезапускает туннель сам
+        if (on && vm.routingDirty) {
+            Spacer(Modifier.height(8.dp))
+            Muted("Правила изменены. Туннель перезапустится сам.", 12)
+            Spacer(Modifier.height(6.dp))
+            Button({ vm.applyRouting(ctx) }, Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(12.dp)) { Text("Сохранить") }
+            Spacer(Modifier.height(8.dp))
+        }
     }
 }
 
@@ -267,7 +282,12 @@ fun SettingsMain(vm: AppVm) {
             Text("Тема"); Pick(vm.theme, themes) { vm.changeTheme(it) }
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-        TextButton({ vm.openGuide() }, contentPadding = PaddingValues(0.dp)) { Text("Показать инструкцию") }
+        Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            Muted("Версия", 14); Text("v" + BuildConfig.VERSION_NAME, fontSize = 14.sp)
+        }
+        Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            Muted("Канал обновлений", 14); Text(when (vm.channel) { "ptb" -> "PTB"; "dev" -> "Dev"; else -> "Stable" }, fontSize = 14.sp)
+        }
         Spacer(Modifier.height(10.dp))
         Muted(Api.store.email ?: "", 13)
         Spacer(Modifier.height(6.dp))

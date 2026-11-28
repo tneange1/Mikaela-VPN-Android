@@ -222,6 +222,16 @@ class AppVm(app: Application) : AndroidViewModel(app) {
 
     fun pick(tag: String) { selected = tag; Api.store.server = tag }
 
+    suspend fun pingLive() {
+        val list = servers
+        if (list.isEmpty()) return
+        kotlinx.coroutines.coroutineScope {
+            list.map { s -> async { val p = Api.ping(s); pings = pings + (s.tag to p) } }.awaitAll()
+        }
+    }
+
+    fun applyRouting(ctx: Context) { routingDirty = false; reconnect(ctx) }
+
     fun pingAll() {
         viewModelScope.launch {
             pings = emptyMap()
