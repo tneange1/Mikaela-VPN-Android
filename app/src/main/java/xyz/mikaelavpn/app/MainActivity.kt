@@ -56,6 +56,7 @@ fun Root(vm: AppVm) {
             if (vm.screen == "login") LoginScreen(vm) else MainScreen(vm)
         }
         IntroDialog(vm)
+        RoutingWizard(vm)
         if (force) UpdateDialog(vm)
     }
 }

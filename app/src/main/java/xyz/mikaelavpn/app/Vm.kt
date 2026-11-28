@@ -36,6 +36,10 @@ class AppVm(app: Application) : AndroidViewModel(app) {
     var toast by mutableStateOf("")
     var sheet by mutableStateOf("")
     var settingsPage by mutableStateOf("main")
+    /** Первичная настройка маршрутизации: "" | ask | perm | pick | dest */
+    var wizard by mutableStateOf("")
+    var wizTop by mutableStateOf<List<TopApp>>(emptyList())
+    var wizPicked by mutableStateOf<Set<String>>(emptySet())
     var routing by mutableStateOf(Api.routing())
     var routingDirty by mutableStateOf(false)
     var autoConnect by mutableStateOf(Api.store.autoConnect)

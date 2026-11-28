@@ -247,6 +247,7 @@ fun SettingsTab(vm: AppVm) {
                 "routing" -> RoutingPage(vm)
                 "apps" -> AppsPage(vm)
                 "domains" -> DomainsPage(vm)
+                "log" -> LogPage(vm)
                 else -> SettingsMain(vm)
             }
         }
@@ -278,6 +279,7 @@ fun SettingsMain(vm: AppVm) {
         Spacer(Modifier.height(12.dp))
         NavRow("Дополнительные параметры") { vm.settingsPage = "adv" }
         NavRow("Маршрутизация", (vm.routing.apps.size + vm.routing.rules.size).let { if (it > 0) "$it" else "" }) { vm.settingsPage = "routing" }
+        NavRow("Журнал") { vm.settingsPage = "log" }
         Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("Тема"); Pick(vm.theme, themes) { vm.changeTheme(it) }
         }
@@ -315,17 +317,6 @@ fun AdvPage(vm: AppVm) {
                 else -> "Stable: проверенные релизы. Рекомендуется."
             }, 12)
             Muted("Переход на более стабильный канал сработает с его следующим релизом: Android не позволяет ставить версию с меньшим номером сборки поверх новой.", 12)
-        }
-        Spacer(Modifier.height(14.dp))
-        Panel {
-            Text("Диагностика")
-            Spacer(Modifier.height(4.dp))
-            Muted("Если что-то не работает, нажмите и отправьте скопированный текст в поддержку.", 12)
-            TextButton({
-                val cb = ctx.getSystemService(android.content.ClipboardManager::class.java)
-                cb.setPrimaryClip(android.content.ClipData.newPlainText("Mikaela VPN", VpnSvc.report(ctx)))
-                vm.say("Журнал скопирован")
-            }, contentPadding = PaddingValues(0.dp)) { Text("Скопировать журнал") }
         }
         Spacer(Modifier.height(14.dp))
         Panel {

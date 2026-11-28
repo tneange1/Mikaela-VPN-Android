@@ -27,6 +27,8 @@ class Store(ctx: Context) {
     var server: String? get() = s("server"); set(v) = put("server", v)
     var theme: String get() = s("theme") ?: "system"; set(v) = put("theme", v)
     var seen: String? get() = s("seen"); set(v) = put("seen", v)
+    /** Первичная настройка маршрутизации уже предлагалась */
+    var rtWiz: Boolean get() = s("rtwiz") == "1"; set(v) = put("rtwiz", if (v) "1" else "0")
     /** Канал обновлений: stable | ptb | dev */
     var channel: String get() = s("channel")?.takeIf { it in listOf("stable", "ptb", "dev") } ?: "stable"; set(v) = put("channel", v)
     var subId: String? get() = s("subid"); set(v) = put("subid", v)
