@@ -1,7 +1,7 @@
 name: build-android
 on:
   push:
-    branches: [main, ptb, dev]
+    branches: [stable, ptb, dev]
     tags: ['v*']
   workflow_dispatch:
 permissions:
@@ -101,7 +101,7 @@ jobs:
           path: Mikaela-VPN.apk
 
       - name: Publish release (тег v* или новая версия из version.txt)
-        if: startsWith(github.ref, 'refs/tags/v') || (github.ref == 'refs/heads/main' && steps.ver.outputs.new == 'true')
+        if: startsWith(github.ref, 'refs/tags/v') || (github.ref == 'refs/heads/stable' && steps.ver.outputs.new == 'true')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.ver.outputs.version }}
