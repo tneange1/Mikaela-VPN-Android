@@ -506,6 +506,8 @@ object Api {
         val rules = JSONArray()
         rules.put(JSONObject().put("action", "sniff"))
         rules.put(JSONObject().put("protocol", "dns").put("action", "hijack-dns"))
+        // QUIC через Xray-UDP не отвечает: отбиваем, браузеры сразу уходят на TCP
+        rules.put(JSONObject().put("protocol", "quic").put("action", "reject"))
         rules.put(JSONObject().put("ip_is_private", true).put("outbound", "direct"))
 
         // «на сервер»: у каждого уникального сервера свой Xray; несколько серверов в правиле — группа urltest
@@ -553,7 +555,7 @@ object Api {
             .put("log", JSONObject().put("level", "warn").put("timestamp", false))
             .put("dns", JSONObject().put("servers", JSONArray().put(JSONObject().put("type", "tcp").put("tag", "dns-remote").put("server", "1.1.1.1").put("detour", "xray"))).put("final", "dns-remote").put("strategy", "ipv4_only"))
             .put("inbounds", JSONArray().put(JSONObject().put("type", "tun").put("tag", "tun-in").put("address", JSONArray(listOf("172.19.0.1/30", "fdfe:dcba:9876::1/126")))
-                .put("auto_route", true).put("stack", "mixed").put("mtu", 1500)))
+                .put("auto_route", true).put("stack", "gvisor").put("mtu", 1500)))
             .put("outbounds", outs)
             .put("route", JSONObject().put("rules", rules).put("final", "xray").put("auto_detect_interface", false).put("find_process", true))
         return JSONObject().put("xray", xray).put("sb", sb).toString()
